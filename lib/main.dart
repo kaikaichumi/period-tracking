@@ -1,33 +1,23 @@
+// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/home_screen.dart';
-import 'screens/statistics_screen.dart';
+import 'screens/stats_screen.dart';
 import 'screens/settings_screen.dart';
-import 'services/database_service.dart';
 import 'providers/user_settings_provider.dart';
 
-void main() async {
-  try {
-    WidgetsFlutterBinding.ensureInitialized();
-    await SharedPreferences.getInstance();
-    runApp(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider(create: (_) => UserSettingsProvider()),
-        ],
-        child: const PeriodTrackerApp(),
-      ),
-    );
-  } catch (e) {
-    print('Initialization error: $e');
-    runApp(const PeriodTrackerApp());
-  }
+void main() {
+  runApp(
+    ChangeNotifierProvider(
+      create: (context) => UserSettingsProvider(),
+      child: const MyApp(),
+    ),
+  );
 }
 
-class PeriodTrackerApp extends StatelessWidget {
-  const PeriodTrackerApp({Key? key}) : super(key: key);
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +25,7 @@ class PeriodTrackerApp extends StatelessWidget {
       title: '月經週期追蹤',
       theme: ThemeData(
         primarySwatch: Colors.pink,
-        useMaterial3: true,
+        scaffoldBackgroundColor: Colors.grey[50],
       ),
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
@@ -44,61 +34,56 @@ class PeriodTrackerApp extends StatelessWidget {
       ],
       supportedLocales: const [
         Locale('zh', 'TW'),
-        Locale('en', 'US'),
       ],
-      locale: const Locale('zh', 'TW'),
-      home: MainScreen(),
-      debugShowCheckedModeBanner: false,
+      home: const MainScreen(),
     );
   }
 }
 
 class MainScreen extends StatefulWidget {
-  MainScreen({Key? key}) : super(key: key);  // 移除 const
+  const MainScreen({Key? key}) : super(key: key);
 
   @override
-  _MainScreenState createState() => _MainScreenState();
+  State<MainScreen> createState() => _MainScreenState();
 }
 
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
-  late final List<Widget> _screens;  // 使用 late final
+  
+  final List<Widget> _screens = [
+    const HomeScreen(),
+    const StatsScreen(),
+    const SettingsScreen(),
+  ];
 
-  @override
-  void initState() {
-    super.initState();
-    _screens = [
-      HomeScreen(),      // 移除 const
-      StatisticsScreen(),  // 移除 const
-      SettingsScreen(),    // 移除 const
-    ];
+  void _onItemTapped(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: _screens[_selectedIndex],
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (int index) {
-          setState(() {
-            _selectedIndex = index;
-          });
-        },
-        destinations: const [  // 這裡的 const 可以保留
-          NavigationDestination(
+      bottomNavigationBar: BottomNavigationBar(
+        items: const <BottomNavigationBarItem>[
+          BottomNavigationBarItem(
             icon: Icon(Icons.calendar_today),
             label: '日曆',
           ),
-          NavigationDestination(
+          BottomNavigationBarItem(
             icon: Icon(Icons.bar_chart),
-            label: '統計',
+            label: '分析',
           ),
-          NavigationDestination(
+          BottomNavigationBarItem(
             icon: Icon(Icons.settings),
             label: '設定',
           ),
         ],
+        currentIndex: _selectedIndex,
+        selectedItemColor: Colors.pink,
+        onTap: _onItemTapped,
       ),
     );
   }

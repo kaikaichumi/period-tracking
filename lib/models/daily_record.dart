@@ -1,101 +1,170 @@
 // lib/models/daily_record.dart
-class DailyRecord {
-  final String id;
-  final DateTime date;
-  final bool hasPeriod;
-  final BleedingLevel? bleedingLevel;  // 出血量
-  final PainLevel? painLevel;          // 經痛程度
-  final List<Symptom> symptoms;        // 症狀
-  final IntimateRecord? intimateRecord; // 性行為紀錄
-  
-  DailyRecord({
-    required this.id,
-    required this.date,
-    required this.hasPeriod,
-    this.bleedingLevel,
-    this.painLevel,
-    this.symptoms = const [],
-    this.intimateRecord,
-  });
+import 'package:flutter/foundation.dart';
 
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'date': date.toIso8601String(),
-    'hasPeriod': hasPeriod,
-    'bleedingLevel': bleedingLevel?.index,
-    'painLevel': painLevel?.index,
-    'symptoms': symptoms.map((s) => s.index).toList(),
-    'intimateRecord': intimateRecord?.toJson(),
-  };
-
-  factory DailyRecord.fromJson(Map<String, dynamic> json) => DailyRecord(
-    id: json['id'],
-    date: DateTime.parse(json['date']),
-    hasPeriod: json['hasPeriod'],
-    bleedingLevel: json['bleedingLevel'] != null 
-      ? BleedingLevel.values[json['bleedingLevel']]
-      : null,
-    painLevel: json['painLevel'] != null 
-      ? PainLevel.values[json['painLevel']]
-      : null,
-    symptoms: (json['symptoms'] as List)
-      .map((i) => Symptom.values[i]).toList(),
-    intimateRecord: json['intimateRecord'] != null
-      ? IntimateRecord.fromJson(json['intimateRecord'])
-      : null,
-  );
-}
-
-// lib/models/intimate_record.dart
-class IntimateRecord {
-  final int frequency;
-  final ContraceptionMethod? contraceptionMethod;
-
-  IntimateRecord({
-    required this.frequency,
-    this.contraceptionMethod,
-  });
-
-  Map<String, dynamic> toJson() => {
-    'frequency': frequency,
-    'contraceptionMethod': contraceptionMethod?.index,
-  };
-
-  factory IntimateRecord.fromJson(Map<String, dynamic> json) => IntimateRecord(
-    frequency: json['frequency'],
-    contraceptionMethod: json['contraceptionMethod'] != null
-      ? ContraceptionMethod.values[json['contraceptionMethod']]
-      : null,
-  );
-}
-
-// lib/utils/constants.dart
 enum BleedingLevel {
+  none,
+  spotting,
   light,
   medium,
   heavy,
 }
 
-enum PainLevel {
-  none,
-  mild,
-  moderate,
-  severe,
-}
-
-enum Symptom {
-  headache,
-  breastTenderness,
-  bloating,
-  mood,
-  fatigue,
-  // 其他症狀...
-}
-
 enum ContraceptionMethod {
+  none,
   condom,
   pill,
   iud,
-  none,
+  calendar,
+  withdrawal,
   other,
+}
+
+class DailyRecord {
+  final int? id;
+  final DateTime date;
+  final bool hasPeriod;  // 是否為經期
+  final BleedingLevel? bleedingLevel;  // 出血量
+  final int? painLevel;  // 經痛程度 1-10
+  final Map<String, bool> symptoms;  // 症狀
+  
+  // 親密關係相關
+  final bool hasIntimacy;
+  final int? intimacyFrequency;
+  final ContraceptionMethod? contraceptionMethod;
+  
+  // 備註
+  final String? notes;
+  final String? intimacyNotes;
+
+  DailyRecord({
+    this.id,
+    required this.date,
+    this.hasPeriod = false,
+    this.bleedingLevel,
+    this.painLevel,
+    Map<String, bool>? symptoms,
+    this.hasIntimacy = false,
+    this.intimacyFrequency,
+    this.contraceptionMethod,
+    this.notes,
+    this.intimacyNotes,
+  }) : symptoms = symptoms ?? {
+    '情緒變化': false,
+    '乳房脹痛': false,
+    '腰痛': false,
+    '頭痛': false,
+    '疲勞': false,
+    '痘痘': false,
+    '噁心': false,
+    '食慾改變': false,
+    '失眠': false,
+    '腹脹': false,
+  };
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'date': date.toIso8601String(),
+      'hasPeriod': hasPeriod,
+      'bleedingLevel': bleedingLevel?.index,
+      'painLevel': painLevel,
+      'symptoms': symptoms,
+      'hasIntimacy': hasIntimacy,
+      'intimacyFrequency': intimacyFrequency,
+      'contraceptionMethod': contraceptionMethod?.index,
+      'notes': notes,
+      'intimacyNotes': intimacyNotes,
+    };
+  }
+
+  factory DailyRecord.fromJson(Map<String, dynamic> json) {
+    return DailyRecord(
+      id: json['id'] as int?,
+      date: DateTime.parse(json['date'] as String),
+      hasPeriod: json['hasPeriod'] as bool? ?? false,
+      bleedingLevel: json['bleedingLevel'] != null
+          ? BleedingLevel.values[json['bleedingLevel'] as int]
+          : null,
+      painLevel: json['painLevel'] as int?,
+      symptoms: Map<String, bool>.from(json['symptoms'] ?? {}),
+      hasIntimacy: json['hasIntimacy'] as bool? ?? false,
+      intimacyFrequency: json['intimacyFrequency'] as int?,
+      contraceptionMethod: json['contraceptionMethod'] != null
+          ? ContraceptionMethod.values[json['contraceptionMethod'] as int]
+          : null,
+      notes: json['notes'] as String?,
+      intimacyNotes: json['intimacyNotes'] as String?,
+    );
+  }
+
+  DailyRecord copyWith({
+    int? id,
+    DateTime? date,
+    bool? hasPeriod,
+    BleedingLevel? bleedingLevel,
+    int? painLevel,
+    Map<String, bool>? symptoms,
+    bool? hasIntimacy,
+    int? intimacyFrequency,
+    ContraceptionMethod? contraceptionMethod,
+    String? notes,
+    String? intimacyNotes,
+  }) {
+    return DailyRecord(
+      id: id ?? this.id,
+      date: date ?? this.date,
+      hasPeriod: hasPeriod ?? this.hasPeriod,
+      bleedingLevel: bleedingLevel ?? this.bleedingLevel,
+      painLevel: painLevel ?? this.painLevel,
+      symptoms: symptoms ?? Map<String, bool>.from(this.symptoms),
+      hasIntimacy: hasIntimacy ?? this.hasIntimacy,
+      intimacyFrequency: intimacyFrequency ?? this.intimacyFrequency,
+      contraceptionMethod: contraceptionMethod ?? this.contraceptionMethod,
+      notes: notes ?? this.notes,
+      intimacyNotes: intimacyNotes ?? this.intimacyNotes,
+    );
+  }
+
+  @override
+  String toString() {
+    return 'DailyRecord(id: $id, date: $date, hasPeriod: $hasPeriod, '
+        'bleedingLevel: $bleedingLevel, painLevel: $painLevel, '
+        'symptoms: $symptoms, hasIntimacy: $hasIntimacy, '
+        'intimacyFrequency: $intimacyFrequency, '
+        'contraceptionMethod: $contraceptionMethod, '
+        'notes: $notes, intimacyNotes: $intimacyNotes)';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+  
+    return other is DailyRecord &&
+      other.id == id &&
+      other.date == date &&
+      other.hasPeriod == hasPeriod &&
+      other.bleedingLevel == bleedingLevel &&
+      other.painLevel == painLevel &&
+      mapEquals(other.symptoms, symptoms) &&
+      other.hasIntimacy == hasIntimacy &&
+      other.intimacyFrequency == intimacyFrequency &&
+      other.contraceptionMethod == contraceptionMethod &&
+      other.notes == notes &&
+      other.intimacyNotes == intimacyNotes;
+  }
+
+  @override
+  int get hashCode {
+    return id.hashCode ^
+      date.hashCode ^
+      hasPeriod.hashCode ^
+      bleedingLevel.hashCode ^
+      painLevel.hashCode ^
+      symptoms.hashCode ^
+      hasIntimacy.hashCode ^
+      intimacyFrequency.hashCode ^
+      contraceptionMethod.hashCode ^
+      notes.hashCode ^
+      intimacyNotes.hashCode;
+  }
 }

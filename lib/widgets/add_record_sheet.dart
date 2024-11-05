@@ -1,13 +1,12 @@
+// lib/widgets/add_record_sheet.dart
 import 'package:flutter/material.dart';
-import '../models/period_record.dart';
-import '../models/intimacy_record.dart';
-import '../utils/constants.dart';
+import '../models/daily_record.dart';
 import '../services/database_service.dart';
 
 class AddRecordSheet extends StatefulWidget {
   final DateTime selectedDate;
-  final Function(PeriodRecord) onSave;
-  final PeriodRecord? existingRecord;
+  final DailyRecord? existingRecord;
+  final Function(DailyRecord) onSave;
 
   const AddRecordSheet({
     Key? key,
@@ -21,25 +20,31 @@ class AddRecordSheet extends StatefulWidget {
 }
 
 class _AddRecordSheetState extends State<AddRecordSheet> {
-  late DateTime _startDate;
-  DateTime? _endDate;
+  // 月經相關
+  bool _hasPeriod = false;
+  BleedingLevel _bleedingLevel = BleedingLevel.medium;
   int _painLevel = 1;
-  FlowIntensity _flowIntensity = FlowIntensity.medium;
-  final Map<String, bool> _symptoms = Map.fromEntries(
-    AppConstants.symptoms.entries.map(
-      (e) => MapEntry(e.value, false),
-    ),
-  );
+  final Map<String, bool> _symptoms = {
+    '情緒變化': false,
+    '乳房脹痛': false,
+    '腰痛': false,
+    '頭痛': false,
+    '疲勞': false,
+    '痘痘': false,
+    '噁心': false,
+    '食慾改變': false,
+    '失眠': false,
+    '腹脹': false,
+  };
   
-  // 親密關係相關變數
+  // 親密關係相關
   bool _hasIntimacy = false;
   int _intimacyFrequency = 1;
-  ContraceptionMethod _selectedContraception = ContraceptionMethod.none;
+  ContraceptionMethod _contraceptionMethod = ContraceptionMethod.none;
+  
+  // 備註控制器
   final TextEditingController _notesController = TextEditingController();
   final TextEditingController _intimacyNotesController = TextEditingController();
-  bool _isEditing = false;
-  bool _isSettingEndDate = false;
-  IntimacyRecord? _existingIntimacyRecord;
 
   @override
   void initState() {
@@ -48,40 +53,47 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
   }
 
   Future<void> _initializeData() async {
-    // 初始化經期記錄
-    if (widget.existingRecord != null) {
+    // 檢查是否有現有記錄
+    var existingRecord = widget.existingRecord ?? 
+        await DatabaseService.instance.getDailyRecord(widget.selectedDate);
+    
+    if (existingRecord != null) {
       setState(() {
-        _startDate = widget.existingRecord!.startDate;
-        _endDate = widget.existingRecord!.endDate;
-        _painLevel = widget.existingRecord!.painLevel;
-        _flowIntensity = widget.existingRecord!.flowIntensity;
-        _symptoms.addAll(widget.existingRecord!.symptoms);
-        _notesController.text = widget.existingRecord!.notes ?? '';
-        _isEditing = true;
-        _isSettingEndDate = widget.existingRecord!.endDate == null;
-        if (_isSettingEndDate) {
-          _endDate = widget.selectedDate;
+        _hasPeriod = existingRecord.hasPeriod;
+        _bleedingLevel = existingRecord.bleedingLevel ?? BleedingLevel.medium;
+        _painLevel = existingRecord.painLevel ?? 1;
+        _symptoms.addAll(existingRecord.symptoms);
+        _notesController.text = existingRecord.notes ?? '';
+        
+        if (existingRecord.hasIntimacy) {
+          _hasIntimacy = true;
+          _intimacyFrequency = existingRecord.intimacyFrequency ?? 1;
+          _contraceptionMethod = existingRecord.contraceptionMethod ?? ContraceptionMethod.none;
+          _intimacyNotesController.text = existingRecord.intimacyNotes ?? '';
         }
       });
     } else {
-      _startDate = widget.selectedDate;
-    }
-
-    // 載入親密關係記錄
-    try {
-      _existingIntimacyRecord = await DatabaseService.instance
-          .getIntimacyRecordForDate(widget.selectedDate);
-      
-      if (_existingIntimacyRecord != null) {
-        setState(() {
-          _hasIntimacy = true;
-          _intimacyFrequency = _existingIntimacyRecord!.frequency;
-          _selectedContraception = _existingIntimacyRecord!.contraceptionMethod;
-          _intimacyNotesController.text = _existingIntimacyRecord!.notes ?? '';
-        });
+      // 如果沒有現有記錄，檢查是否在經期內
+      var lastPeriodStart = await DatabaseService.instance.findLastPeriodStartDate();
+          
+      if (lastPeriodStart != null) {
+        // 檢查是否有之後的結束記錄
+        var records = await DatabaseService.instance.getAllDailyRecords();
+        var endRecord = records
+            .where((r) => !r.hasPeriod && 
+                        r.date.isAfter(lastPeriodStart) && 
+                        r.date.isBefore(widget.selectedDate))
+            .toList();
+            
+        if (endRecord.isEmpty) {
+          // 如果沒有結束記錄，且當前日期在經期開始日期之後
+          if (widget.selectedDate.isAfter(lastPeriodStart)) {
+            setState(() {
+              _hasPeriod = true;  // 預設為經期中
+            });
+          }
+        }
       }
-    } catch (e) {
-      print('Error loading intimacy record: $e');
     }
   }
 
@@ -94,60 +106,6 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isSettingEndDate) {
-      return _buildEndDateSheet();
-    }
-    return _buildFullSheet();
-  }
-
-  Widget _buildEndDateSheet() {
-    return Container(
-      padding: const EdgeInsets.all(16.0),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _buildDragHandle(),
-          const Text(
-            '設定結束日期',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-          ListTile(
-            title: const Text('開始日期'),
-            subtitle: Text('${_startDate.year}/${_startDate.month}/${_startDate.day}'),
-            leading: const Icon(Icons.calendar_today),
-            enabled: false,
-          ),
-          ListTile(
-            title: const Text('結束日期'),
-            subtitle: Text('${_endDate!.year}/${_endDate!.month}/${_endDate!.day}'),
-            leading: const Icon(Icons.calendar_today),
-            onTap: () => _selectDate(false),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            '週期長度：${_endDate!.difference(_startDate).inDays + 1} 天',
-            style: TextStyle(
-              color: Colors.pink[700],
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 24),
-          _buildSaveButton('儲存結束日期'),
-          const SizedBox(height: 16),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFullSheet() {
     return Container(
       height: MediaQuery.of(context).size.height * 0.9,
       decoration: const BoxDecoration(
@@ -162,22 +120,24 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
               padding: const EdgeInsets.all(16.0),
               children: [
                 Text(
-                  _isEditing ? '編輯記錄' : '新增記錄',
+                  widget.existingRecord != null ? '編輯記錄' : '新增記錄',
                   style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 const SizedBox(height: 24),
-                
-                _buildDateSection(),
+
+                _buildPeriodSection(),
                 const SizedBox(height: 16),
 
-                _buildPainLevelSection(),
-                const SizedBox(height: 16),
+                if (_hasPeriod) ...[
+                  _buildBleedingLevelSection(),
+                  const SizedBox(height: 16),
 
-                _buildFlowIntensitySection(),
-                const SizedBox(height: 16),
+                  _buildPainLevelSection(),
+                  const SizedBox(height: 16),
+                ],
 
                 _buildSymptomsSection(),
                 const SizedBox(height: 16),
@@ -188,7 +148,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                 _buildIntimacySection(),
                 const SizedBox(height: 24),
 
-                Center(child: _buildSaveButton('儲存')),
+                Center(child: _buildSaveButton()),
                 const SizedBox(height: 24),
               ],
             ),
@@ -210,7 +170,40 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
     );
   }
 
-  Widget _buildDateSection() {
+  Widget _buildPeriodSection() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  '月經來了',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Switch(
+                  value: _hasPeriod,
+                  onChanged: (value) {
+                    setState(() {
+                      _hasPeriod = value;
+                    });
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBleedingLevelSection() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -218,43 +211,35 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              '週期日期',
+              '出血量',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
               ),
             ),
-            const SizedBox(height: 16),
-            ListTile(
-              title: const Text('開始日期'),
-              subtitle: Text(
-                '${_startDate.year}/${_startDate.month}/${_startDate.day}',
-              ),
-              leading: const Icon(Icons.calendar_today),
-              onTap: () => _selectDate(true),
+            const SizedBox(height: 8),
+            SegmentedButton<BleedingLevel>(
+              segments: const [
+                ButtonSegment<BleedingLevel>(
+                  value: BleedingLevel.light,
+                  label: Text('輕'),
+                ),
+                ButtonSegment<BleedingLevel>(
+                  value: BleedingLevel.medium,
+                  label: Text('中'),
+                ),
+                ButtonSegment<BleedingLevel>(
+                  value: BleedingLevel.heavy,
+                  label: Text('重'),
+                ),
+              ],
+              selected: {_bleedingLevel},
+              onSelectionChanged: (Set<BleedingLevel> newSelection) {
+                setState(() {
+                  _bleedingLevel = newSelection.first;
+                });
+              },
             ),
-            if (_isEditing) ...[
-              ListTile(
-                title: const Text('結束日期（選填）'),
-                subtitle: Text(
-                  _endDate != null
-                      ? '${_endDate!.year}/${_endDate!.month}/${_endDate!.day}'
-                      : '請選擇結束日期',
-                ),
-                leading: const Icon(Icons.calendar_today),
-                onTap: () => _selectDate(false),
-              ),
-              if (_endDate != null)
-                Center(
-                  child: Text(
-                    '週期長度：${_endDate!.difference(_startDate).inDays + 1} 天',
-                    style: TextStyle(
-                      color: Colors.pink[700],
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-            ],
           ],
         ),
       ),
@@ -292,49 +277,6 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                 '${_painLevel.toString()} / 10',
                 style: const TextStyle(fontSize: 16),
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFlowIntensitySection() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '出血量',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            SegmentedButton<FlowIntensity>(
-              segments: const [
-                ButtonSegment<FlowIntensity>(
-                  value: FlowIntensity.light,
-                  label: Text('輕'),
-                ),
-                ButtonSegment<FlowIntensity>(
-                  value: FlowIntensity.medium,
-                  label: Text('中'),
-                ),
-                ButtonSegment<FlowIntensity>(
-                  value: FlowIntensity.heavy,
-                  label: Text('重'),
-                ),
-              ],
-              selected: {_flowIntensity},
-              onSelectionChanged: (Set<FlowIntensity> newSelection) {
-                setState(() {
-                  _flowIntensity = newSelection.first;
-                });
-              },
             ),
           ],
         ),
@@ -407,7 +349,6 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
     );
   }
 
-   // 修改親密關係記錄區塊的建構方法
   Widget _buildIntimacySection() {
     return Card(
       child: Padding(
@@ -470,17 +411,17 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                   labelText: '避孕方式',
                   border: OutlineInputBorder(),
                 ),
-                value: _selectedContraception,
+                value: _contraceptionMethod,
                 items: ContraceptionMethod.values.map((method) {
                   return DropdownMenuItem<ContraceptionMethod>(
                     value: method,
-                    child: Text(_getContraceptionMethodText(method)),
+                    child: Text(_contraceptionMethodToString(method)),
                   );
                 }).toList(),
-                onChanged: (ContraceptionMethod? value) {
+                onChanged: (value) {
                   if (value != null) {
                     setState(() {
-                      _selectedContraception = value;
+                      _contraceptionMethod = value;
                     });
                   }
                 },
@@ -501,46 +442,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
     );
   }
 
-  Widget _buildSaveButton(String text) {
-    return ElevatedButton(
-      onPressed: _savePeriod,
-      style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.pink,
-        padding: const EdgeInsets.symmetric(horizontal: 32,
-          vertical: 12,
-        ),
-      ),
-      child: Text(text),
-    );
-  }
-
-  Future<void> _selectDate(bool isStartDate) async {
-    final DateTime currentDate = isStartDate ? _startDate : (_endDate ?? _startDate);
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: currentDate,
-      firstDate: isStartDate ? DateTime(2020) : _startDate,
-      lastDate: DateTime.now().add(const Duration(days: 1)),
-      locale: const Locale('zh', 'TW'),
-    );
-
-    if (picked != null) {
-      setState(() {
-        if (isStartDate) {
-          _startDate = picked;
-          // 如果選擇的開始日期在結束日期之後，清除結束日期
-          if (_endDate != null && _endDate!.isBefore(_startDate)) {
-            _endDate = null;
-          }
-        } else {
-          _endDate = picked;
-        }
-      });
-    }
-  }
-
-  // 避孕方式文字轉換輔助方法
-  String _getContraceptionMethodText(ContraceptionMethod method) {
+  String _contraceptionMethodToString(ContraceptionMethod method) {
     switch (method) {
       case ContraceptionMethod.none:
         return '無避孕措施';
@@ -559,49 +461,46 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
     }
   }
 
-  // 修改保存方法
-  void _savePeriod() async {
-  try {
-    // 保存經期記錄
-    final periodRecord = PeriodRecord(
-      id: widget.existingRecord?.id,
-      startDate: _startDate,
-      endDate: _endDate,
-      painLevel: _painLevel,
-      symptoms: Map<String, bool>.from(_symptoms),
-      flowIntensity: _flowIntensity,
-      notes: _notesController.text.isEmpty ? null : _notesController.text,
-    );
-
-    // 使用回調保存經期記錄
-    widget.onSave(periodRecord);
-
-    // 如果有親密關係記錄，保存它
-    if (_hasIntimacy) {
-      final intimacyRecord = IntimacyRecord(
-        id: _existingIntimacyRecord?.id,
-        date: widget.selectedDate,
-        frequency: _intimacyFrequency,
-        contraceptionMethod: _selectedContraception,
-        notes: _intimacyNotesController.text.isEmpty 
-          ? null 
-          : _intimacyNotesController.text,
-      );
-      await DatabaseService.instance.saveIntimacyRecord(intimacyRecord);
-    } else if (_existingIntimacyRecord?.id != null) {
-      // 如果原本有記錄但現在關閉了，刪除記錄
-      await DatabaseService.instance.deleteIntimacyRecord(_existingIntimacyRecord!.id!);
-    }
-  } catch (e) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('儲存失敗: $e'),
-          backgroundColor: Colors.red,
+  Widget _buildSaveButton() {
+    return ElevatedButton(
+      onPressed: _save,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.pink,
+        padding: const EdgeInsets.symmetric(
+          horizontal: 32,
+          vertical: 12,
         ),
-      );
-    }
-    return; // 發生錯誤時不關閉表單
+      ),
+      child: const Text('儲存'),
+    );
   }
-}
+
+  void _save() {
+    try {
+      final dailyRecord = DailyRecord(
+        id: widget.existingRecord?.id,
+        date: widget.selectedDate,
+        hasPeriod: _hasPeriod,
+        bleedingLevel: _hasPeriod ? _bleedingLevel : null,
+        painLevel: _hasPeriod ? _painLevel : null,
+        symptoms: Map<String, bool>.from(_symptoms),
+        hasIntimacy: _hasIntimacy,
+        intimacyFrequency: _hasIntimacy ? _intimacyFrequency : null,
+        contraceptionMethod: _hasIntimacy ? _contraceptionMethod : null,
+        notes: _notesController.text.isEmpty ? null : _notesController.text,
+        intimacyNotes: _intimacyNotesController.text.isEmpty ? null : _intimacyNotesController.text,
+      );
+
+      widget.onSave(dailyRecord);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('儲存失敗: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
 }

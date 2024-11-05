@@ -1,14 +1,13 @@
 // lib/services/database_service.dart
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../models/period_record.dart';
-import '../models/intimacy_record.dart';
+import '../models/daily_record.dart';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
   static SharedPreferences? _prefs;
   static const String _dailyRecordsKey = 'daily_records';
-  static const String _intimacyRecordsKey = 'intimacy_records';
+  static const String _nextIdKey = 'next_id';
   static int _nextId = 0;
 
   DatabaseService._init();
@@ -16,170 +15,191 @@ class DatabaseService {
   Future<SharedPreferences> get prefs async {
     if (_prefs != null) return _prefs!;
     _prefs = await SharedPreferences.getInstance();
-    _nextId = _prefs!.getInt('next_id') ?? 0;
+    _nextId = _prefs!.getInt(_nextIdKey) ?? 0;
     return _prefs!;
   }
 
-  // 獲取所有經期記錄
-  Future<List<PeriodRecord>> getAllPeriods() async {
+  // 獲取所有每日記錄
+  Future<List<DailyRecord>> getAllDailyRecords() async {
     final pref = await prefs;
     final String? recordsJson = pref.getString(_dailyRecordsKey);
     if (recordsJson == null) return [];
 
     try {
       List<dynamic> recordsList = jsonDecode(recordsJson);
-      return recordsList.map((json) => PeriodRecord.fromJson(json)).toList();
+      var records = recordsList.map((json) => DailyRecord.fromJson(json)).toList();
+      // 按日期排序（新到舊）
+      records.sort((a, b) => b.date.compareTo(a.date));
+      return records;
     } catch (e) {
-      print('Error decoding period records: $e');
+      print('Error decoding daily records: $e');
       return [];
     }
   }
 
-  // 獲取所有親密關係記錄
-  Future<List<IntimacyRecord>> getAllIntimacyRecords() async {
-    final pref = await prefs;
-    final String? recordsJson = pref.getString(_intimacyRecordsKey);
-    if (recordsJson == null) return [];
-
-    try {
-      List<dynamic> recordsList = jsonDecode(recordsJson);
-      return recordsList.map((json) => IntimacyRecord.fromJson(json)).toList();
-    } catch (e) {
-      print('Error decoding intimacy records: $e');
-      return [];
-    }
-  }
-
-  // 獲取指定日期的經期記錄
-  Future<PeriodRecord?> getPeriodRecordForDate(DateTime date) async {
-    final records = await getAllPeriods();
+  // 獲取指定日期的記錄
+  Future<DailyRecord?> getDailyRecord(DateTime date) async {
+    final records = await getAllDailyRecords();
     try {
       return records.firstWhere(
-        (record) => _isDateInPeriod(date, record),
+        (record) => isSameDay(record.date, date),
       );
     } catch (e) {
-      return null;
-    }
-  }
-
-  // 獲取指定日期的親密關係記錄
-  Future<IntimacyRecord?> getIntimacyRecordForDate(DateTime date) async {
-    final records = await getAllIntimacyRecords();
-    try {
-      return records.firstWhere(
-        (record) => 
-          record.date.year == date.year && 
-          record.date.month == date.month && 
-          record.date.day == date.day,
-      );
-    } catch (e) {
-      return null;
-    }
-  }
-
-  // 檢查日期是否在經期內
-  bool _isDateInPeriod(DateTime date, PeriodRecord record) {
-    if (record.endDate == null) {
-      return date.year == record.startDate.year &&
-             date.month == record.startDate.month &&
-             date.day == record.startDate.day;
-    }
-    return date.isAfter(record.startDate.subtract(const Duration(days: 1))) &&
-           date.isBefore(record.endDate!.add(const Duration(days: 1)));
-  }
-
-  // 保存經期記錄
-  Future<void> savePeriodRecord(PeriodRecord record) async {
-    final records = await getAllPeriods();
-    
-    if (record.id != null) {
-      final index = records.indexWhere((r) => r.id == record.id);
-      if (index != -1) {
-        records[index] = record;
-      } else {
-        records.add(record);
+      // 如果找不到記錄，檢查是否在經期內
+      final isInPeriod = await this.isInPeriod(date);
+      if (isInPeriod) {
+        return DailyRecord(
+          date: date,
+          hasPeriod: true,
+        );
       }
-    } else {
-      final newRecord = PeriodRecord(
-        id: _nextId,
-        startDate: record.startDate,
-        endDate: record.endDate,
-        painLevel: record.painLevel,
-        symptoms: record.symptoms,
-        flowIntensity: record.flowIntensity,
-        notes: record.notes,
-      );
-      records.add(newRecord);
-      _nextId++;
-      await _saveNextId();
+      return null;
     }
-
-    await _savePeriodRecords(records);
   }
 
-  // 保存親密關係記錄
-  Future<void> saveIntimacyRecord(IntimacyRecord record) async {
-    final records = await getAllIntimacyRecords();
-    final existingIndex = records.indexWhere((r) => 
-      r.date.year == record.date.year && 
-      r.date.month == record.date.month && 
-      r.date.day == record.date.day
+  // 獲取所有經期日期
+  Future<List<DateTime>> getAllPeriodDays() async {
+    final records = await getAllDailyRecords();
+    List<DateTime> periodDays = [];
+    
+    // 按日期排序
+    records.sort((a, b) => a.date.compareTo(b.date));
+    
+    DateTime? periodStart;
+    for (var record in records) {
+      if (record.hasPeriod && periodStart == null) {
+        // 找到經期開始
+        periodStart = record.date;
+      } else if (!record.hasPeriod && periodStart != null) {
+        // 找到經期結束，添加這期間的所有日期
+        var currentDate = periodStart;
+        while (currentDate!.isBefore(record.date)) {
+          periodDays.add(currentDate);
+          currentDate = currentDate.add(const Duration(days: 1));
+        }
+        periodStart = null;
+      }
+    }
+
+    // 如果有未結束的經期（最後一次標記為"是"但還沒有標記"否"）
+    if (periodStart != null) {
+      var currentDate = periodStart;
+      var today = DateTime.now();
+      while (!currentDate!.isAfter(today)) {
+        periodDays.add(currentDate);
+        currentDate = currentDate.add(const Duration(days: 1));
+      }
+    }
+
+    return periodDays;
+  }
+
+  // 檢查指定日期是否在經期內
+  Future<bool> isInPeriod(DateTime date) async {
+    final records = await getAllDailyRecords();
+    records.sort((a, b) => a.date.compareTo(b.date));
+
+    DateTime? periodStart;
+    for (var record in records) {
+      if (record.hasPeriod && periodStart == null) {
+        periodStart = record.date;
+      }
+      if (!record.hasPeriod && periodStart != null) {
+        if (date.isAfter(periodStart.subtract(const Duration(days: 1))) && 
+            date.isBefore(record.date)) {
+          return true;
+        }
+        periodStart = null;
+      }
+    }
+
+    // 檢查是否在最後一個未結束的經期內
+    if (periodStart != null) {
+      return date.isAfter(periodStart.subtract(const Duration(days: 1))) &&
+             !date.isAfter(DateTime.now());
+    }
+
+    return false;
+  }
+
+  // 查找最後一次經期開始的日期
+  Future<DateTime?> findLastPeriodStartDate() async {
+    final records = await getAllDailyRecords();
+    if (records.isEmpty) return null;
+
+    // 按日期排序（新到舊）
+    records.sort((a, b) => b.date.compareTo(a.date));
+    
+    // 找到最近一次經期開始的記錄
+    var lastPeriodRecord = records.firstWhere(
+      (record) => record.hasPeriod,
+      orElse: () => records.first,
     );
 
-    if (existingIndex != -1) {
+    return lastPeriodRecord.date;
+  }
+
+  // 保存記錄
+  Future<void> saveDailyRecord(DailyRecord record) async {
+    final records = await getAllDailyRecords();
+    final index = records.indexWhere((r) => isSameDay(r.date, record.date));
+
+    if (index != -1) {
       // 更新現有記錄
-      records[existingIndex] = record;
+      records[index] = record.copyWith(id: records[index].id);
     } else {
       // 添加新記錄
-      records.add(record);
+      final newRecord = record.copyWith(id: _nextId++);
+      records.add(newRecord);
+      
+      // 保存新的 ID
+      final pref = await prefs;
+      await pref.setInt(_nextIdKey, _nextId);
     }
 
-    await _saveIntimacyRecords(records);
-  }
-  // 新增經期記錄
-  Future<void> insertPeriod(PeriodRecord record) async {
-    final records = await getAllPeriods();
-    final newRecord = record.copyWith(id: _nextId++);
-    records.add(newRecord);
-    await _savePeriodRecords(records);
-    
-    // 保存新的 ID
-    final pref = await prefs;
-    await pref.setInt('next_id', _nextId);
+    await _saveDailyRecords(records);
+
+    // 如果是標記經期結束，需要填充中間的日期
+    if (!record.hasPeriod) {
+      final periodStart = await findLastPeriodStartDate();
+      if (periodStart != null && periodStart.isBefore(record.date)) {
+        var currentDate = periodStart.add(const Duration(days: 1));
+        while (currentDate.isBefore(record.date)) {
+          // 檢查這一天是否已經有記錄
+          final existingRecord = await getDailyRecord(currentDate);
+          if (existingRecord == null) {
+            // 為中間的每一天創建記錄
+            final middleRecord = DailyRecord(
+              date: currentDate,
+              hasPeriod: true,
+            );
+            await _saveSingleRecord(middleRecord);
+          }
+          currentDate = currentDate.add(const Duration(days: 1));
+        }
+      }
+    }
   }
 
-  // 更新經期記錄
-  Future<void> updatePeriod(PeriodRecord record) async {
-    final records = await getAllPeriods();
-    final index = records.indexWhere((r) => r.id == record.id);
+  // 保存單條記錄
+  Future<void> _saveSingleRecord(DailyRecord record) async {
+    final records = await getAllDailyRecords();
+    final index = records.indexWhere((r) => isSameDay(r.date, record.date));
+
     if (index != -1) {
-      records[index] = record;
-      await _savePeriodRecords(records);
+      records[index] = record.copyWith(id: records[index].id);
+    } else {
+      final newRecord = record.copyWith(id: _nextId++);
+      records.add(newRecord);
+      final pref = await prefs;
+      await pref.setInt(_nextIdKey, _nextId);
     }
+
+    await _saveDailyRecords(records);
   }
 
-  // 刪除經期記錄
-  Future<void> deletePeriodRecord(int id) async {
-    final records = await getAllPeriods();
-    records.removeWhere((record) => record.id == id);
-    await _savePeriodRecords(records);
-  }
-
-  // 刪除親密關係記錄
-  Future<void> deleteIntimacyRecord(int id) async {
-    final records = await getAllIntimacyRecords();
-    records.removeWhere((record) => record.id == id);
-    await _saveIntimacyRecords(records);
-  }
-
-  // 保存下一個ID
-  Future<void> _saveNextId() async {
-    final pref = await prefs;
-    await pref.setInt('next_id', _nextId);
-  }
-
-  // 保存經期記錄
-  Future<void> _savePeriodRecords(List<PeriodRecord> records) async {
+  // 保存所有記錄
+  Future<void> _saveDailyRecords(List<DailyRecord> records) async {
     final pref = await prefs;
     final recordsJson = jsonEncode(
       records.map((record) => record.toJson()).toList(),
@@ -187,12 +207,100 @@ class DatabaseService {
     await pref.setString(_dailyRecordsKey, recordsJson);
   }
 
-  // 保存親密關係記錄
-  Future<void> _saveIntimacyRecords(List<IntimacyRecord> records) async {
+  // 刪除日記錄
+  Future<void> deleteDailyRecord(DateTime date) async {
+    final records = await getAllDailyRecords();
+    records.removeWhere((record) => isSameDay(record.date, date));
+    await _saveDailyRecords(records);
+  }
+
+  // 清除所有資料
+  Future<void> clearAllData() async {
     final pref = await prefs;
-    final recordsJson = jsonEncode(
-      records.map((record) => record.toJson()).toList(),
-    );
-    await pref.setString(_intimacyRecordsKey, recordsJson);
+    await pref.remove(_dailyRecordsKey);
+    await pref.remove(_nextIdKey);
+    _nextId = 0;
+  }
+
+  // 檢查兩個日期是否為同一天
+  bool isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  // 獲取統計資訊
+  Future<Map<String, dynamic>> getStatistics() async {
+    final records = await getAllDailyRecords();
+    if (records.isEmpty) {
+      return {
+        'averageCycleLength': 0,
+        'averagePeriodLength': 0,
+        'commonSymptoms': <String>[],
+      };
+    }
+
+    // 找出所有經期週期
+    List<List<DailyRecord>> periods = [];
+    List<DailyRecord> currentPeriod = [];
+    
+    for (var record in records) {
+      if (record.hasPeriod) {
+        if (currentPeriod.isEmpty || 
+            record.date.difference(currentPeriod.last.date).inDays <= 1) {
+          currentPeriod.add(record);
+        } else {
+          if (currentPeriod.isNotEmpty) {
+            periods.add(List.from(currentPeriod));
+          }
+          currentPeriod = [record];
+        }
+      }
+    }
+    if (currentPeriod.isNotEmpty) {
+      periods.add(currentPeriod);
+    }
+
+    // 計算週期長度
+    List<int> cycleLengths = [];
+    for (int i = 0; i < periods.length - 1; i++) {
+      final currentStart = periods[i].first.date;
+      final nextStart = periods[i + 1].first.date;
+      final cycleLength = currentStart.difference(nextStart).inDays.abs();
+      if (cycleLength > 0 && cycleLength < 45) {  // 排除異常值
+        cycleLengths.add(cycleLength);
+      }
+    }
+
+    // 計算經期長度
+    List<int> periodLengths = periods
+        .map((period) => period.length)
+        .where((length) => length > 0 && length < 15) // 排除異常值
+        .toList();
+
+    // 統計症狀
+    Map<String, int> symptomCount = {};
+    for (var record in records.where((r) => r.hasPeriod)) {
+      record.symptoms.forEach((symptom, hasSymptom) {
+        if (hasSymptom) {
+          symptomCount[symptom] = (symptomCount[symptom] ?? 0) + 1;
+        }
+      });
+    }
+
+    // 找出最常見的症狀
+    var commonSymptoms = symptomCount.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    return {
+      'averageCycleLength': cycleLengths.isEmpty 
+        ? 0 
+        : cycleLengths.reduce((a, b) => a + b) / cycleLengths.length,
+      'averagePeriodLength': periodLengths.isEmpty 
+        ? 0 
+        : periodLengths.reduce((a, b) => a + b) / periodLengths.length,
+      'commonSymptoms': commonSymptoms
+        .take(3)
+        .map((e) => e.key)
+        .toList(),
+    };
   }
 }
