@@ -5,75 +5,57 @@ import '../services/notification_service.dart';
 import '../services/database_service.dart';
 import '../utils/constants.dart';
 
-class UserSettings {
-  final int cycleLength;
-  final int periodLength;
-  final bool notificationsEnabled;
-  final TimeOfDay reminderTime;
-  final Set<int> reminderDays;
-
-  UserSettings({
-    this.cycleLength = AppConstants.defaultCycleLength,
-    this.periodLength = AppConstants.defaultPeriodLength,
-    this.notificationsEnabled = true,
-    TimeOfDay? reminderTime,
-    Set<int>? reminderDays,
-  }) : reminderTime = reminderTime ?? const TimeOfDay(hour: 9, minute: 0),
-       reminderDays = reminderDays ?? {1}; // 預設一天前提醒
-
-  UserSettings copyWith({
-    int? cycleLength,
-    int? periodLength,
-    bool? notificationsEnabled,
-    TimeOfDay? reminderTime,
-    Set<int>? reminderDays,
-  }) {
-    return UserSettings(
-      cycleLength: cycleLength ?? this.cycleLength,
-      periodLength: periodLength ?? this.periodLength,
-      notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
-      reminderTime: reminderTime ?? this.reminderTime,
-      reminderDays: reminderDays ?? this.reminderDays,
-    );
-  }
-}
-
 class UserSettingsProvider extends ChangeNotifier {
-  UserSettings _settings = UserSettings();
+  // 內部狀態
+  int _cycleLength = AppConstants.defaultCycleLength;
+  int _periodLength = AppConstants.defaultPeriodLength;
+  bool _notificationsEnabled = true;
+  TimeOfDay _reminderTime = const TimeOfDay(hour: 9, minute: 0);
+  Set<int> _reminderDays = {1}; // 預設一天前提醒
   bool _isLoading = true;
 
+  // Getters
   bool get isLoading => _isLoading;
-  UserSettings get settings => _settings;
-  int get cycleLength => _settings.cycleLength;
-  int get periodLength => _settings.periodLength;
-  bool get notificationsEnabled => _settings.notificationsEnabled;
-  TimeOfDay get reminderTime => _settings.reminderTime;
-  Set<int> get reminderDays => _settings.reminderDays;
+  int get cycleLength => _cycleLength;
+  int get periodLength => _periodLength;
+  bool get notificationsEnabled => _notificationsEnabled;
+  TimeOfDay get reminderTime => _reminderTime;
+  Set<int> get reminderDays => _reminderDays;
 
   UserSettingsProvider() {
     _loadSettings();
   }
 
+  // 載入設定
   Future<void> _loadSettings() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       
-      _settings = UserSettings(
-        cycleLength: prefs.getInt(AppConstants.prefsCycleLength) ?? 
-            AppConstants.defaultCycleLength,
-        periodLength: prefs.getInt('period_length') ?? 
-            AppConstants.defaultPeriodLength,
-        notificationsEnabled: prefs.getBool('notifications_enabled') ?? true,
-        reminderTime: _timeOfDayFromString(
-          prefs.getString('reminder_time') ?? '09:00',
-        ),
-        reminderDays: (prefs.getStringList('reminder_days') ?? ['1'])
-            .map(int.parse)
-            .toSet(),
-      );
+      _cycleLength = prefs.getInt(AppConstants.prefsCycleLength) ?? 
+          AppConstants.defaultCycleLength;
+      _periodLength = prefs.getInt('period_length') ?? 
+          AppConstants.defaultPeriodLength;
+      _notificationsEnabled = prefs.getBool('notifications_enabled') ?? true;
       
+      // 載入提醒時間
+      final timeString = prefs.getString('reminder_time') ?? '09:00';
+      final timeParts = timeString.split(':');
+      _reminderTime = TimeOfDay(
+        hour: int.parse(timeParts[0]),
+        minute: int.parse(timeParts[1]),
+      );
+
+      // 載入提醒天數
+      final reminderDaysStr = prefs.getStringList('reminder_days') ?? ['1'];
+      _reminderDays = reminderDaysStr.map(int.parse).toSet();
+
       _isLoading = false;
       notifyListeners();
+
+      // 如果通知已啟用，重新安排提醒
+      if (_notificationsEnabled) {
+        _scheduleNotifications();
+      }
     } catch (e) {
       debugPrint('Error loading settings: $e');
       _isLoading = false;
@@ -81,55 +63,54 @@ class UserSettingsProvider extends ChangeNotifier {
     }
   }
 
+  // 儲存設定
   Future<void> _saveSettings() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       
-      await prefs.setInt(AppConstants.prefsCycleLength, _settings.cycleLength);
-      await prefs.setInt('period_length', _settings.periodLength);
-      await prefs.setBool('notifications_enabled', _settings.notificationsEnabled);
+      await prefs.setInt(AppConstants.prefsCycleLength, _cycleLength);
+      await prefs.setInt('period_length', _periodLength);
+      await prefs.setBool('notifications_enabled', _notificationsEnabled);
       await prefs.setString(
         'reminder_time',
-        '${_settings.reminderTime.hour}:${_settings.reminderTime.minute}',
+        '${_reminderTime.hour}:${_reminderTime.minute}',
       );
       await prefs.setStringList(
         'reminder_days',
-        _settings.reminderDays.map((d) => d.toString()).toList(),
+        _reminderDays.map((d) => d.toString()).toList(),
       );
       
       notifyListeners();
       
       // 如果通知已啟用，重新安排提醒
-      if (_settings.notificationsEnabled) {
-        final nextPeriod = await getPredictedNextPeriod();
-        await NotificationService.instance.schedulePeriodReminders(
-          nextPeriod,
-          _settings.reminderDays,
-          _settings.reminderTime,
-        );
+      if (_notificationsEnabled) {
+        await _scheduleNotifications();
       }
     } catch (e) {
       debugPrint('Error saving settings: $e');
     }
   }
 
+  // 更新週期長度
   Future<void> updateCycleLength(int newLength) async {
     if (newLength >= AppConstants.minCycleLength && 
         newLength <= AppConstants.maxCycleLength) {
-      _settings = _settings.copyWith(cycleLength: newLength);
+      _cycleLength = newLength;
       await _saveSettings();
     }
   }
 
+  // 更新經期長度
   Future<void> updatePeriodLength(int newLength) async {
     if (newLength > 0 && newLength <= 10) {
-      _settings = _settings.copyWith(periodLength: newLength);
+      _periodLength = newLength;
       await _saveSettings();
     }
   }
 
+  // 更新通知開關
   Future<void> updateNotificationsEnabled(bool enabled) async {
-    _settings = _settings.copyWith(notificationsEnabled: enabled);
+    _notificationsEnabled = enabled;
     
     if (!enabled) {
       // 如果關閉通知，取消所有提醒
@@ -139,48 +120,95 @@ class UserSettingsProvider extends ChangeNotifier {
     await _saveSettings();
   }
 
+  // 更新提醒時間
   Future<void> updateReminderTime(TimeOfDay newTime) async {
-    _settings = _settings.copyWith(reminderTime: newTime);
+    _reminderTime = newTime;
     await _saveSettings();
   }
 
+  // 更新提醒天數
   Future<void> updateReminderDays(Set<int> days) async {
-    _settings = _settings.copyWith(reminderDays: days);
+    _reminderDays = days;
     await _saveSettings();
   }
 
-  // 重置為預設設定
-  Future<void> resetToDefaults() async {
-    _settings = UserSettings();
-    await _saveSettings();
-  }
-
-  // 獲取預測的下次經期日期
-  Future<DateTime> getPredictedNextPeriod() async {
+  // 安排通知
+  Future<void> _scheduleNotifications() async {
     try {
-      final records = await DatabaseService.instance.getAllDailyRecords();
-      if (records.isEmpty) {
-        return DateTime.now().add(Duration(days: _settings.cycleLength));
-      }
-
-      // 找到最後一次經期開始的日期
-      records.sort((a, b) => b.date.compareTo(a.date));
-      final lastPeriodStart = records.firstWhere((r) => r.hasPeriod).date;
+      // 先取消現有的通知
+      await NotificationService.instance.cancelAll();
       
-      // 計算下次經期日期
-      return lastPeriodStart.add(Duration(days: _settings.cycleLength));
+      // 如果通知已關閉，直接返回
+      if (!_notificationsEnabled) return;
+
+      // 獲取預測的下次經期日期
+      final nextPeriod = await _getNextPeriodDate();
+      
+      // 安排新的通知
+      await NotificationService.instance.schedulePeriodReminders(
+        nextPeriod,
+        _reminderDays,
+        _reminderTime,
+      );
     } catch (e) {
-      debugPrint('Error predicting next period: $e');
-      // 如果發生錯誤，返回預設值
-      return DateTime.now().add(Duration(days: _settings.cycleLength));
+      debugPrint('Error scheduling notifications: $e');
     }
   }
 
-  static TimeOfDay _timeOfDayFromString(String timeString) {
-    final parts = timeString.split(':');
-    return TimeOfDay(
-      hour: int.parse(parts[0]),
-      minute: int.parse(parts[1]),
+  // 預測下次經期日期
+  Future<DateTime> _getNextPeriodDate() async {
+    final records = await DatabaseService.instance.getAllDailyRecords();
+    if (records.isEmpty) {
+      return DateTime.now().add(Duration(days: _cycleLength));
+    }
+
+    // 找到最後一次經期開始的日期
+    records.sort((a, b) => b.date.compareTo(a.date));
+    final lastPeriodStart = records.firstWhere((r) => r.hasPeriod).date;
+    
+    // 計算下次經期日期
+    return lastPeriodStart.add(Duration(days: _cycleLength));
+  }
+
+  // 導出設定為 JSON
+  Map<String, dynamic> toJson() {
+    return {
+      'cycleLength': _cycleLength,
+      'periodLength': _periodLength,
+      'notificationsEnabled': _notificationsEnabled,
+      'reminderTime': '${_reminderTime.hour}:${_reminderTime.minute}',
+      'reminderDays': _reminderDays.toList(),
+    };
+  }
+
+  // 從 JSON 導入設定
+  Future<void> fromJson(Map<String, dynamic> json) async {
+    _cycleLength = json['cycleLength'] ?? AppConstants.defaultCycleLength;
+    _periodLength = json['periodLength'] ?? AppConstants.defaultPeriodLength;
+    _notificationsEnabled = json['notificationsEnabled'] ?? true;
+    
+    final timeString = json['reminderTime'] ?? '09:00';
+    final timeParts = timeString.split(':');
+    _reminderTime = TimeOfDay(
+      hour: int.parse(timeParts[0]),
+      minute: int.parse(timeParts[1]),
     );
+
+    _reminderDays = (json['reminderDays'] as List<dynamic>?)
+        ?.map((e) => e as int)
+        ?.toSet() ?? {1};
+
+    await _saveSettings();
+  }
+
+  // 重置為預設值
+  Future<void> resetToDefaults() async {
+    _cycleLength = AppConstants.defaultCycleLength;
+    _periodLength = AppConstants.defaultPeriodLength;
+    _notificationsEnabled = true;
+    _reminderTime = const TimeOfDay(hour: 9, minute: 0);
+    _reminderDays = {1};
+    
+    await _saveSettings();
   }
 }
