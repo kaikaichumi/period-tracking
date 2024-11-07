@@ -24,7 +24,7 @@ class AddRecordSheet extends StatefulWidget {
 class _AddRecordSheetState extends State<AddRecordSheet> {
   bool _hasPeriod = false;
   BleedingLevel _bleedingLevel = BleedingLevel.medium;
-  int _painLevel = 1;
+  int _painLevel = 0;
   final Map<String, bool> _symptoms = {
     '情緒變化': false,
     '乳房脹痛': false,
@@ -64,13 +64,13 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
       // 載入現有記錄
       _hasPeriod = existingRecord.hasPeriod;
       _bleedingLevel = existingRecord.bleedingLevel ?? BleedingLevel.medium;
-      _painLevel = existingRecord.painLevel ?? 1;
+      _painLevel = existingRecord.painLevel ?? 0;
       _symptoms.addAll(existingRecord.symptoms);
       _notesController.text = existingRecord.notes ?? '';
       
       if (existingRecord.hasIntimacy) {
         _hasIntimacy = true;
-        _intimacyFrequency = existingRecord.intimacyFrequency ?? 1;
+        _intimacyFrequency = existingRecord.intimacyFrequency ?? 0;
         _contraceptionMethod = existingRecord.contraceptionMethod ?? ContraceptionMethod.none;
         _intimacyNotesController.text = existingRecord.intimacyNotes ?? '';
       }
@@ -267,7 +267,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
               segments: const [
                 ButtonSegment<BleedingLevel>(
                   value: BleedingLevel.light,
-                  label: Text('輕'),
+                  label: Text('少'),
                 ),
                 ButtonSegment<BleedingLevel>(
                   value: BleedingLevel.medium,
@@ -275,7 +275,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                 ),
                 ButtonSegment<BleedingLevel>(
                   value: BleedingLevel.heavy,
-                  label: Text('重'),
+                  label: Text('多'),
                 ),
               ],
               selected: {_bleedingLevel},
@@ -308,9 +308,9 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
             ),
             Slider(
               value: _painLevel.toDouble(),
-              min: 1,
+              min: 0,
               max: 10,
-              divisions: 9,
+              divisions: 10,
               label: _painLevel.toString(),
               onChanged: (value) {
                 setState(() {

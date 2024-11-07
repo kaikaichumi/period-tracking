@@ -127,7 +127,7 @@ Future<DateTime?> findPeriodStartBeforeDate(DateTime currentDate) async {
                 ? BleedingLevel.light 
                 : BleedingLevel.medium,
               // 如果是最後一天，設置經痛程度為1
-              painLevel: isSameDay(currentDate, record.date) ? 1 : null,
+              painLevel: isSameDay(currentDate, record.date) ? 0 : null,
               // 最後一天也標記為經期結束
               isPeriodEndDay: isSameDay(currentDate, record.date),
             );
@@ -145,7 +145,7 @@ Future<DateTime?> findPeriodStartBeforeDate(DateTime currentDate) async {
     if (!record.hasPeriod && await isInPeriod(record.date)) {
       record = record.copyWith(
         bleedingLevel: BleedingLevel.light,
-        painLevel: 1,
+        painLevel: 0,
         isPeriodEndDay: true,
       );
     }

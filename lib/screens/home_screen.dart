@@ -463,11 +463,11 @@ class _HomeScreenState extends State<HomeScreen> {
       case BleedingLevel.spotting:
         return '點滴';
       case BleedingLevel.light:
-        return '輕';
+        return '少';
       case BleedingLevel.medium:
         return '中';
       case BleedingLevel.heavy:
-        return '重';
+        return '多';
       default:
         return '無';
     }
