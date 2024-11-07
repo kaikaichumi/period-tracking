@@ -22,19 +22,16 @@ enum ContraceptionMethod {
 class DailyRecord {
   final int? id;
   final DateTime date;
-  final bool hasPeriod;  // 是否為經期
-  final BleedingLevel? bleedingLevel;  // 出血量
-  final int? painLevel;  // 經痛程度 1-10
-  final Map<String, bool> symptoms;  // 症狀
-  
-  // 親密關係相關
+  final bool hasPeriod;
+  final BleedingLevel? bleedingLevel;
+  final int? painLevel;
+  final Map<String, bool> symptoms;
   final bool hasIntimacy;
   final int? intimacyFrequency;
   final ContraceptionMethod? contraceptionMethod;
-  
-  // 備註
   final String? notes;
   final String? intimacyNotes;
+  final bool isPeriodEndDay;  // 新增屬性
 
   DailyRecord({
     this.id,
@@ -48,6 +45,7 @@ class DailyRecord {
     this.contraceptionMethod,
     this.notes,
     this.intimacyNotes,
+    this.isPeriodEndDay = false,  // 預設為 false
   }) : symptoms = symptoms ?? {
     '情緒變化': false,
     '乳房脹痛': false,
@@ -74,6 +72,7 @@ class DailyRecord {
       'contraceptionMethod': contraceptionMethod?.index,
       'notes': notes,
       'intimacyNotes': intimacyNotes,
+      'isPeriodEndDay': isPeriodEndDay,  // 新增字段
     };
   }
 
@@ -94,6 +93,7 @@ class DailyRecord {
           : null,
       notes: json['notes'] as String?,
       intimacyNotes: json['intimacyNotes'] as String?,
+      isPeriodEndDay: json['isPeriodEndDay'] as bool? ?? false,  // 新增解析
     );
   }
 
@@ -109,6 +109,7 @@ class DailyRecord {
     ContraceptionMethod? contraceptionMethod,
     String? notes,
     String? intimacyNotes,
+    bool? isPeriodEndDay,  // 新增參數
   }) {
     return DailyRecord(
       id: id ?? this.id,
@@ -122,49 +123,7 @@ class DailyRecord {
       contraceptionMethod: contraceptionMethod ?? this.contraceptionMethod,
       notes: notes ?? this.notes,
       intimacyNotes: intimacyNotes ?? this.intimacyNotes,
+      isPeriodEndDay: isPeriodEndDay ?? this.isPeriodEndDay,  // 新增複製
     );
-  }
-
-  @override
-  String toString() {
-    return 'DailyRecord(id: $id, date: $date, hasPeriod: $hasPeriod, '
-        'bleedingLevel: $bleedingLevel, painLevel: $painLevel, '
-        'symptoms: $symptoms, hasIntimacy: $hasIntimacy, '
-        'intimacyFrequency: $intimacyFrequency, '
-        'contraceptionMethod: $contraceptionMethod, '
-        'notes: $notes, intimacyNotes: $intimacyNotes)';
-  }
-
-  @override
-  bool operator ==(Object other) {
-    if (identical(this, other)) return true;
-  
-    return other is DailyRecord &&
-      other.id == id &&
-      other.date == date &&
-      other.hasPeriod == hasPeriod &&
-      other.bleedingLevel == bleedingLevel &&
-      other.painLevel == painLevel &&
-      mapEquals(other.symptoms, symptoms) &&
-      other.hasIntimacy == hasIntimacy &&
-      other.intimacyFrequency == intimacyFrequency &&
-      other.contraceptionMethod == contraceptionMethod &&
-      other.notes == notes &&
-      other.intimacyNotes == intimacyNotes;
-  }
-
-  @override
-  int get hashCode {
-    return id.hashCode ^
-      date.hashCode ^
-      hasPeriod.hashCode ^
-      bleedingLevel.hashCode ^
-      painLevel.hashCode ^
-      symptoms.hashCode ^
-      hasIntimacy.hashCode ^
-      intimacyFrequency.hashCode ^
-      contraceptionMethod.hashCode ^
-      notes.hashCode ^
-      intimacyNotes.hashCode;
   }
 }

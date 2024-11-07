@@ -19,12 +19,13 @@ dependencies:
   shared_preferences: ^2.2.2
   flutter_local_notifications: ^9.9.1
   timezone: ^0.8.0
-  intl: ^0.18.1
+  intl: ^0.19.0
   fl_chart: ^0.65.0  # 更新到最新版本
   path: ^1.8.3
   google_sign_in: ^6.1.5
   googleapis: ^11.4.0
   http: ^1.1.0
+  collection: ^1.17.0  # 或更新的版本
 
 
 dev_dependencies:
