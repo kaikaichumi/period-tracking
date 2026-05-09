@@ -52,58 +52,35 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
   }
 
   Future<void> _initializeData() async {
-    // 獲取當前記錄
-  var existingRecord = widget.existingRecord ?? 
-      await DatabaseService.instance.getDailyRecord(widget.selectedDate);
+    final existingRecord = widget.existingRecord ??
+        await DatabaseService.instance.getDailyRecord(widget.selectedDate);
 
-  // 檢查當前選擇的日期是否在經期中
-  final isInPeriod = await DatabaseService.instance.isInPeriod(widget.selectedDate);
-
-  setState(() {
-    if (existingRecord != null) {
-      // 載入現有記錄
-      _hasPeriod = existingRecord.hasPeriod;
-      _bleedingLevel = existingRecord.bleedingLevel ?? BleedingLevel.medium;
-      _painLevel = existingRecord.painLevel ?? 0;
-      _symptoms.addAll(existingRecord.symptoms);
-      _notesController.text = existingRecord.notes ?? '';
-      
-      if (existingRecord.hasIntimacy) {
-        _hasIntimacy = true;
-        _intimacyFrequency = existingRecord.intimacyFrequency ?? 0;
-        _contraceptionMethod = existingRecord.contraceptionMethod ?? ContraceptionMethod.none;
-        _intimacyNotesController.text = existingRecord.intimacyNotes ?? '';
-      }
+    bool fallbackHasPeriod = false;
+    if (existingRecord == null) {
+      fallbackHasPeriod =
+          await DatabaseService.instance.isInPeriod(widget.selectedDate);
     }
-    
-    // 根據當前日期是否在經期中來設定開關狀態
-    _hasPeriod = isInPeriod;
-  });
-}
 
-    void _saveRecord() async {
-    final record = DailyRecord(
-      id: widget.existingRecord?.id,
-      date: widget.selectedDate,
-      hasPeriod: _hasPeriod,
-      bleedingLevel: _hasPeriod ? _bleedingLevel : null,
-      painLevel: _hasPeriod ? _painLevel : null,
-      symptoms: Map<String, bool>.from(_symptoms),
-      hasIntimacy: _hasIntimacy,
-      intimacyFrequency: _hasIntimacy ? _intimacyFrequency : null,
-      contraceptionMethod: _hasIntimacy ? _contraceptionMethod : null,
-      notes: _notesController.text.isEmpty ? null : _notesController.text,
-      intimacyNotes: _intimacyNotesController.text.isEmpty ? null : _intimacyNotesController.text,
-    );
+    if (!mounted) return;
+    setState(() {
+      if (existingRecord != null) {
+        _hasPeriod = existingRecord.hasPeriod;
+        _bleedingLevel = existingRecord.bleedingLevel ?? BleedingLevel.medium;
+        _painLevel = existingRecord.painLevel ?? 0;
+        _symptoms.addAll(existingRecord.symptoms);
+        _notesController.text = existingRecord.notes ?? '';
 
-    await widget.onSave(record);
-
-    // 如果是同一天內從"是"改為"否"，不需要額外處理
-    if (!_hasPeriod && widget.existingRecord?.hasPeriod == true) {
-      if (mounted) {
-        Navigator.of(context).pop();  // 確保會關閉視窗
+        if (existingRecord.hasIntimacy) {
+          _hasIntimacy = true;
+          _intimacyFrequency = existingRecord.intimacyFrequency ?? 0;
+          _contraceptionMethod =
+              existingRecord.contraceptionMethod ?? ContraceptionMethod.none;
+          _intimacyNotesController.text = existingRecord.intimacyNotes ?? '';
+        }
+      } else {
+        _hasPeriod = fallbackHasPeriod;
       }
-    }
+    });
   }
 
   @override
@@ -206,47 +183,84 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
     }
   }
   
+  Future<void> _togglePeriod() async {
+    final wasOn = _hasPeriod;
+    setState(() {
+      _hasPeriod = !wasOn;
+    });
+    await _handleSave();
+    if (wasOn) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已標記為經期結束')),
+        );
+        Navigator.of(context).pop();
+      }
+    }
+  }
+
   Widget _buildPeriodSection() {
-  return Card(
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  '大姨媽來了',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
+    final bool active = _hasPeriod;
+    return Card(
+      color: active ? Colors.pink.shade50 : null,
+      child: InkWell(
+        onTap: _togglePeriod,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Row(
+            children: [
+              Icon(
+                active ? Icons.water_drop : Icons.water_drop_outlined,
+                color: Colors.pink,
+                size: 32,
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '月經狀態',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      active ? '來潮中' : '未記錄',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: active ? Colors.pink.shade700 : Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
                 ),
-                Switch(
-                  value: _hasPeriod,
-                  onChanged: (value) async {
-                    setState(() {
-                      _hasPeriod = value;
-                    });
-                    await _handleSave();
-                    if (!value) {
-                      // 關閉經期時關閉表單
-                      if (mounted) Navigator.pop(context);
-                    }
-                  },
-                  activeColor: Colors.pink,
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 8),
+              active
+                  ? OutlinedButton(
+                      onPressed: _togglePeriod,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.pink,
+                        side: const BorderSide(color: Colors.pink),
+                      ),
+                      child: const Text('結束經期'),
+                    )
+                  : FilledButton(
+                      onPressed: _togglePeriod,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.pink,
+                      ),
+                      child: const Text('標記為經期'),
+                    ),
+            ],
           ),
-        ],
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Widget _buildBleedingLevelSection() {
     return Card(
@@ -283,7 +297,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                 setState(() {
                   _bleedingLevel = newSelection.first;
                 });
-                _saveRecord();
+                _handleSave();
               },
             ),
           ],
@@ -316,7 +330,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                 setState(() {
                   _painLevel = value.round();
                 });
-                _saveRecord();
+                _handleSave();
               },
             ),
             Center(
@@ -357,7 +371,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                     setState(() {
                       _symptoms[symptom] = selected;
                     });
-                    _saveRecord();
+                    _handleSave();
                   },
                 );
               }).toList(),
@@ -390,7 +404,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                 hintText: '輸入備註...',
                 border: OutlineInputBorder(),
               ),
-              onChanged: (_) => _saveRecord(),
+              onChanged: (_) => _handleSave(),
             ),
           ],
         ),
@@ -421,7 +435,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                     setState(() {
                       _hasIntimacy = value;
                     });
-                    _saveRecord();
+                    _handleSave();
                   },
                 ),
               ],
@@ -438,7 +452,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                             setState(() {
                               _intimacyFrequency--;
                             });
-                            _saveRecord();
+                            _handleSave();
                           }
                         : null,
                   ),
@@ -452,7 +466,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                       setState(() {
                         _intimacyFrequency++;
                       });
-                      _saveRecord();
+                      _handleSave();
                     },
                   ),
                 ],
@@ -475,7 +489,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                     setState(() {
                       _contraceptionMethod = value;
                     });
-                    _saveRecord();
+                    _handleSave();
                   }
                 },
               ),
@@ -487,7 +501,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                   border: OutlineInputBorder(),
                 ),
                 maxLines: 2,
-                onChanged: (_) => _saveRecord(),
+                onChanged: (_) => _handleSave(),
               ),
             ],
           ],

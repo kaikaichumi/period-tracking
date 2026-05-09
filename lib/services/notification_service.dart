@@ -128,8 +128,8 @@ class NotificationService {
             message,
             scheduledDateTime,
             platformDetails,
-            androidAllowWhileIdle: true,
-            uiLocalNotificationDateInterpretation: 
+            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+            uiLocalNotificationDateInterpretation:
                 UILocalNotificationDateInterpretation.absoluteTime,
             payload: 'period_reminder_$days',
           );
