@@ -1,16 +1,10 @@
-<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-<uses-permission android:name="android.permission.INTERNET"/>
-<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
-<uses-permission android:name="android.permission.VIBRATE" />
-<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.techcare.lunacare">
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="月經週期追蹤"
         android:name="${applicationName}"
-        android:icon="@mipmap/launcher_icon">
-        <meta-data
-            android:name="com.google.android.gms.version"
-            android:value="@integer/google_play_services_version" />
+        android:label="LunaCare"
+        android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
             android:exported="true"

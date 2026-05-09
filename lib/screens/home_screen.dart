@@ -28,6 +28,9 @@ class _HomeScreenState extends State<HomeScreen> {
   DateTime? _currentPeriodStart;
   List<(DateTime date, bool isPrediction)> _periodDates = [];
   int _predictionConfidence = 50;
+  bool _rangeMode = false;
+  DateTime? _rangeStart;
+  DateTime? _rangeEnd;
 
   @override
   void initState() {
@@ -124,6 +127,27 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('月經週期追蹤'),
         centerTitle: true,
         actions: [
+          IconButton(
+            icon: Icon(
+              Icons.date_range,
+              color: _rangeMode ? Colors.pink[200] : null,
+            ),
+            tooltip: '範圍選擇模式',
+            onPressed: () {
+              setState(() {
+                _rangeMode = !_rangeMode;
+                if (!_rangeMode) {
+                  _rangeStart = null;
+                  _rangeEnd = null;
+                }
+              });
+              if (_rangeMode) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('請選擇經期起始日與結束日')),
+                );
+              }
+            },
+          ),
           if (_predictionConfidence < 100)
             Tooltip(
               message: '預測準確度',
@@ -157,11 +181,29 @@ class _HomeScreenState extends State<HomeScreen> {
             focusedDay: _focusedDay,
             selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
             calendarFormat: _calendarFormat,
-            onDaySelected: (selectedDay, focusedDay) {
+            rangeSelectionMode: _rangeMode
+                ? RangeSelectionMode.toggledOn
+                : RangeSelectionMode.toggledOff,
+            rangeStartDay: _rangeStart,
+            rangeEndDay: _rangeEnd,
+            onDaySelected: _rangeMode
+                ? null
+                : (selectedDay, focusedDay) {
+                    setState(() {
+                      _selectedDay = selectedDay;
+                      _focusedDay = focusedDay;
+                    });
+                  },
+            onRangeSelected: (start, end, focusedDay) {
               setState(() {
-                _selectedDay = selectedDay;
+                _selectedDay = null;
                 _focusedDay = focusedDay;
+                _rangeStart = start;
+                _rangeEnd = end;
               });
+              if (start != null && end != null) {
+                _confirmAddPeriodRange(start, end);
+              }
             },
             onFormatChanged: (format) {
               if (_calendarFormat != format) {
@@ -171,7 +213,9 @@ class _HomeScreenState extends State<HomeScreen> {
               }
             },
             onPageChanged: (focusedDay) {
-              _focusedDay = focusedDay;
+              setState(() {
+                _focusedDay = focusedDay;
+              });
             },
             calendarBuilders: CalendarBuilders(
               markerBuilder: (context, date, events) {
@@ -309,11 +353,85 @@ class _HomeScreenState extends State<HomeScreen> {
             onSave: (record) async {
               await DatabaseService.instance.saveDailyRecord(record);
               await _loadEvents();  // 重新載入資料以更新顯示
-            }, onDelete: () {  },
+            }, onDelete: () async {
+              await DatabaseService.instance.deleteDailyRecord(date);
+              if (mounted) Navigator.of(context).pop();
+              await _loadEvents();
+            },
           ),
         );
       },
     );
+  }
+
+  Future<void> _confirmAddPeriodRange(DateTime start, DateTime end) async {
+    final normalizedStart = DateTime(start.year, start.month, start.day);
+    final normalizedEnd = DateTime(end.year, end.month, end.day);
+    final dayCount = normalizedEnd.difference(normalizedStart).inDays + 1;
+    final formatter = DateFormat('yyyy/MM/dd');
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('新增經期'),
+          content: Text(
+            '將 ${formatter.format(normalizedStart)} 至 ${formatter.format(normalizedEnd)} 標記為經期？(共 $dayCount 天)',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('確認'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      setState(() {
+        _rangeMode = false;
+        _rangeStart = null;
+        _rangeEnd = null;
+      });
+      return;
+    }
+
+    for (int i = 0; i < dayCount; i++) {
+      final day = normalizedStart.add(Duration(days: i));
+      final existing = _events[day];
+      final DailyRecord toSave;
+      if (existing != null) {
+        toSave = existing.copyWith(
+          hasPeriod: true,
+          bleedingLevel: existing.bleedingLevel ?? BleedingLevel.medium,
+        );
+      } else {
+        toSave = DailyRecord(
+          date: day,
+          hasPeriod: true,
+          bleedingLevel: BleedingLevel.medium,
+        );
+      }
+      await DatabaseService.instance.saveDailyRecord(toSave);
+    }
+
+    setState(() {
+      _rangeMode = false;
+      _rangeStart = null;
+      _rangeEnd = null;
+    });
+    await _loadEvents();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已新增 $dayCount 天經期記錄')),
+      );
+    }
   }
 
 
