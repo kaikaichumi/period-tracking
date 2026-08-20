@@ -1,16 +1,14 @@
-// lib/screens/stats_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
+import '../models/daily_record.dart';
+import '../providers/user_settings_provider.dart';
 import '../services/database_service.dart';
 import '../services/prediction_service.dart';
 import '../utils/date_utils.dart' as date_utils;
-import '../models/daily_record.dart';
-// 為兩個衝突的導入添加別名
-import '../models/user_settings.dart' as settings_model;
-import '../providers/user_settings_provider.dart' as settings_provider;
 
 class StatsScreen extends StatefulWidget {
-  const StatsScreen({Key? key}) : super(key: key);
+  const StatsScreen({super.key});
 
   @override
   State<StatsScreen> createState() => _StatsScreenState();
@@ -18,105 +16,251 @@ class StatsScreen extends StatefulWidget {
 
 class _StatsScreenState extends State<StatsScreen> {
   bool _isLoading = true;
-  Map<String, dynamic> _stats = {};
-  List<DateTime> _predictions = [];
-  List<DailyRecord> _records = [];
-  int _predictionConfidence = 50;
-  
+  Map<String, dynamic> _stats = <String, dynamic>{};
+  List<DateTime> _predictions = <DateTime>[];
+  List<DailyRecord> _records = <DailyRecord>[];
+  int? _predictionConfidence;
+  int _loadToken = 0;
+  UserSettingsProvider? _settingsProvider;
+
   @override
   void initState() {
     super.initState();
-    _loadStats();
+    DatabaseService.instance.revision.addListener(_handleDataChanged);
   }
-  
-  Future<void> _loadStats() async {
-    setState(() => _isLoading = true);
-    try {
-      final records = await DatabaseService.instance.getAllDailyRecords();
-      final settingsProvider = context.read<settings_provider.UserSettingsProvider>();
-      
-      // 創建 UserSettings 物件
-      final settings = settings_model.UserSettings(
-        cycleLength: settingsProvider.cycleLength,
-        periodLength: settingsProvider.periodLength,
-      );
-      
-      // 使用創建的 settings 物件
-      final stats = PredictionService.getStatistics(records, settings);
-      final predictions = PredictionService.predictNextPeriods(records, settings);
-      final confidence = PredictionService.getPredictionConfidence(records);
-      
-      setState(() {
-        _records = records;
-        _stats = stats;
-        _predictions = predictions;
-        _predictionConfidence = confidence;
-        _isLoading = false;
-      });
-    } catch (e) {
-      print('Error loading stats: $e');
-      setState(() => _isLoading = false);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final provider = context.read<UserSettingsProvider>();
+    if (!identical(_settingsProvider, provider)) {
+      _settingsProvider?.removeListener(_handleDataChanged);
+      _settingsProvider = provider;
+      provider.addListener(_handleDataChanged);
+      _loadStats();
     }
+  }
+
+  @override
+  void dispose() {
+    DatabaseService.instance.revision.removeListener(_handleDataChanged);
+    _settingsProvider?.removeListener(_handleDataChanged);
+    super.dispose();
+  }
+
+  void _handleDataChanged() => _loadStats();
+
+  Future<void> _loadStats() async {
+    final token = ++_loadToken;
+    final records = await DatabaseService.instance.getAllDailyRecords();
+    if (!mounted || token != _loadToken) return;
+    final settings = context.read<UserSettingsProvider>().settings;
+    setState(() {
+      _records = records;
+      _stats = PredictionService.getStatistics(records, settings);
+      _predictions = PredictionService.predictNextPeriods(records, settings);
+      _predictionConfidence =
+          PredictionService.getPredictionConfidence(records);
+      _isLoading = false;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    return Scaffold(
+      appBar: AppBar(title: const Text('分析')),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _loadStats,
+              child: _records.isEmpty
+                  ? _buildEmptyState()
+                  : ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                      children: <Widget>[
+                        _buildCycleStatsCard(),
+                        const SizedBox(height: 12),
+                        _buildPredictionsCard(),
+                        const SizedBox(height: 12),
+                        _buildSymptomStatsCard(),
+                        const SizedBox(height: 12),
+                        _buildRecordStatsCard(),
+                      ],
+                    ),
+            ),
+    );
+  }
 
+  Widget _buildEmptyState() {
     return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        _buildStatsCard(
-          title: '週期統計',
-          children: [
-            _buildStatRow(
-              label: '平均週期長度',
-              value: '${_stats['averageCycleLength']} 天',
-            ),
-            _buildStatRow(
-              label: '平均經期長度',
-              value: '${_stats['averagePeriodLength']} 天',
-            ),
-            _buildStatRow(
-              label: '週期規律性',
-              value: '${(_stats['cycleRegularity'] * 100).round()}%',
-            ),
-            if (_stats['isUsingSettings'])
-              _buildWarningText('因記錄次數不足，部分數據使用設定值'),
-          ],
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.all(32),
+      children: <Widget>[
+        const SizedBox(height: 96),
+        Icon(
+          Icons.insights_outlined,
+          size: 64,
+          color: Theme.of(context).colorScheme.primary,
         ),
-        const SizedBox(height: 16),
-        _buildPredictionsCard(),
-        const SizedBox(height: 16),
-        _buildSymptomStatsCard(),
-        if (_records.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          _buildRecordStatsCard(),
-        ],
+        const SizedBox(height: 20),
+        Text(
+          '還沒有可分析的資料',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          '先到「日曆」記錄一次經期。沒有真實資料前，LunaCare 不會顯示虛構的預測日期或可信度。',
+          textAlign: TextAlign.center,
+        ),
       ],
     );
   }
 
-  Widget _buildStatsCard({
+  Widget _buildCycleStatsCard() {
+    final regularity = _stats['cycleRegularity'] as double?;
+    final usingSettings = _stats['isUsingSettings'] as bool? ?? true;
+    return _statsCard(
+      title: '週期概況',
+      children: <Widget>[
+        _statRow(
+          label: '平均週期長度',
+          value:
+              '${_stats['averageCycleLength']} 天${usingSettings ? '（設定值）' : ''}',
+        ),
+        _statRow(
+          label: '平均經期長度',
+          value: '${_stats['averagePeriodLength']} 天',
+        ),
+        _statRow(
+          label: '週期規律性',
+          value: regularity == null ? '資料不足' : '${(regularity * 100).round()}%',
+        ),
+        if (regularity == null) _infoText('至少需要 3 次經期開始日，才能比較週期間隔與規律性。'),
+      ],
+    );
+  }
+
+  Widget _buildPredictionsCard() {
+    if (_predictions.isEmpty) {
+      return _statsCard(
+        title: '經期預估',
+        children: <Widget>[
+          const Text('尚未記錄經期開始日，因此目前無法預估。'),
+        ],
+      );
+    }
+
+    return _statsCard(
+      title: '接下來的經期預估',
+      trailing: Chip(
+        avatar: const Icon(Icons.query_stats, size: 18),
+        label: Text(
+          _predictionConfidence == null
+              ? '可信度：資料不足'
+              : '可信度：$_predictionConfidence%',
+        ),
+      ),
+      children: <Widget>[
+        ..._predictions.asMap().entries.map((entry) {
+          return ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: CircleAvatar(
+              radius: 16,
+              child: Text('${entry.key + 1}'),
+            ),
+            title: Text(date_utils.DateUtils.formatDate(entry.value)),
+          );
+        }),
+        _infoText(
+          _predictionConfidence == null
+              ? '目前以設定的週期長度估算，僅供安排與觀察，不代表醫療判斷。'
+              : '預估會隨你新增或修正經期記錄而更新。',
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSymptomStatsCard() {
+    final symptoms = (_stats['commonSymptoms'] as List<dynamic>? ?? <dynamic>[])
+        .whereType<String>()
+        .toList();
+    return _statsCard(
+      title: '常見症狀',
+      children: symptoms.isEmpty
+          ? <Widget>[const Text('尚無症狀記錄。')]
+          : symptoms
+              .map(
+                (symptom) => ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  leading: const Icon(Icons.circle, size: 8),
+                  title: Text(symptom),
+                ),
+              )
+              .toList(),
+    );
+  }
+
+  Widget _buildRecordStatsCard() {
+    final periodDays = _records.where((record) => record.hasPeriod).length;
+    final intimacyDays = _records.where((record) => record.hasIntimacy).length;
+    final symptomDays = _records
+        .where((record) => record.symptoms.values.any((value) => value))
+        .length;
+    final averagePain = _stats['averagePainLevel'] as String?;
+
+    return _statsCard(
+      title: '記錄摘要',
+      children: <Widget>[
+        _statRow(label: '總記錄天數', value: '${_records.length} 天'),
+        _statRow(label: '經期天數', value: '$periodDays 天'),
+        _statRow(
+          label: '平均疼痛程度',
+          value: averagePain == null ? '尚無資料' : '$averagePain / 10',
+        ),
+        _statRow(label: '性行為記錄', value: '$intimacyDays 天'),
+        _statRow(label: '症狀記錄', value: '$symptomDays 天'),
+        _statRow(label: '經期次數', value: '${_stats['totalPeriods']} 次'),
+        if (_stats['lastPeriodStart'] is DateTime)
+          _statRow(
+            label: '最近一次經期開始',
+            value: date_utils.DateUtils.formatDate(
+              _stats['lastPeriodStart'] as DateTime,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _statsCard({
     required String title,
     required List<Widget> children,
+    Widget? trailing,
   }) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                ),
+                if (trailing != null) trailing,
+              ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             ...children,
           ],
         ),
@@ -124,188 +268,19 @@ class _StatsScreenState extends State<StatsScreen> {
     );
   }
 
-  Widget _buildPredictionsCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    '預測下次經期',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                Tooltip(
-                  message: '預測準確度',
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _getConfidenceColor(_predictionConfidence),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '${_predictionConfidence}%',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            ..._predictions.asMap().entries.map((entry) {
-              final index = entry.key;
-              final date = entry.value;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 24,
-                      height: 24,
-                      decoration: BoxDecoration(
-                        color: Colors.pink[100],
-                        shape: BoxShape.circle,
-                      ),
-                      child: Center(
-                        child: Text(
-                          '${index + 1}',
-                          style: const TextStyle(
-                            color: Colors.pink,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      date_utils.DateUtils.formatDate(date),
-                      style: const TextStyle(fontSize: 16),
-                    ),
-                  ],
-                ),
-              );
-            }),
-            if (_stats['isUsingSettings'])
-              _buildWarningText('預測是根據設定的預設週期計算，可能不準確'),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSymptomStatsCard() {
-    final symptoms = (_stats['commonSymptoms'] as List<String>?) ?? [];
-    if (symptoms.isEmpty) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
-              Text(
-                '常見症狀',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              SizedBox(height: 16),
-              Text('尚無症狀記錄'),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return _buildStatsCard(
-      title: '常見症狀',
-      children: symptoms.map((symptom) {
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: Row(
-            children: [
-              const Icon(Icons.circle, size: 8, color: Colors.pink),
-              const SizedBox(width: 8),
-              Expanded(child: Text(symptom)),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  Widget _buildRecordStatsCard() {
-    final periodDays = _records.where((r) => r.hasPeriod).length;
-    final intimacyDays = _records.where((r) => r.hasIntimacy).length;
-    final symptomDays = _records.where((r) => 
-      r.symptoms.values.any((hasSymptom) => hasSymptom)).length;
-      
-    final averagePain = _stats['averagePainLevel'] ?? '0.0';
-
-    return _buildStatsCard(
-      title: '記錄統計',
-      children: [
-        _buildStatRow(
-          label: '總記錄天數',
-          value: '${_records.length} 天',
-        ),
-        _buildStatRow(
-          label: '經期天數',
-          value: '$periodDays 天',
-        ),
-        _buildStatRow(
-          label: '平均經痛程度',
-          value: '$averagePain / 10',
-        ),
-        _buildStatRow(
-          label: '親密關係記錄',
-          value: '$intimacyDays 天',
-        ),
-        _buildStatRow(
-          label: '症狀記錄',
-          value: '$symptomDays 天',
-        ),
-        if (_stats['totalPeriods'] != null)
-          _buildStatRow(
-            label: '記錄週期數',
-            value: '${_stats['totalPeriods']} 次',
-          ),
-        if (_stats['lastPeriodStart'] != null)
-          _buildStatRow(
-            label: '最近一次經期',
-            value: date_utils.DateUtils.formatDate(_stats['lastPeriodStart']),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildStatRow({
-    required String label, 
-    required String value,
-  }) {
+  Widget _statRow({required String label, required String value}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 7),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label),
-          Text(
-            value,
-            style: const TextStyle(
-              fontWeight: FontWeight.w500,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Expanded(child: Text(label)),
+          const SizedBox(width: 16),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: const TextStyle(fontWeight: FontWeight.w600),
             ),
           ),
         ],
@@ -313,30 +288,23 @@ class _StatsScreenState extends State<StatsScreen> {
     );
   }
 
-  Widget _buildWarningText(String text) {
+  Widget _infoText(String text) {
     return Padding(
-      padding: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.only(top: 10),
       child: Row(
-        children: [
-          Icon(Icons.info_outline, size: 16, color: Colors.orange[700]),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(
+            Icons.info_outline,
+            size: 17,
+            color: Theme.of(context).colorScheme.secondary,
+          ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              text,
-              style: TextStyle(
-                color: Colors.orange[700],
-                fontSize: 12,
-              ),
-            ),
+            child: Text(text, style: Theme.of(context).textTheme.bodySmall),
           ),
         ],
       ),
     );
-  }
-
-  Color _getConfidenceColor(int confidence) {
-    if (confidence >= 80) return Colors.green;
-    if (confidence >= 60) return Colors.orange;
-    return Colors.red;
   }
 }

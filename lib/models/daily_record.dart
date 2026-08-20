@@ -1,6 +1,4 @@
 // lib/models/daily_record.dart
-import 'package:flutter/foundation.dart';
-
 enum BleedingLevel {
   none,
   spotting,
@@ -31,7 +29,7 @@ class DailyRecord {
   final ContraceptionMethod? contraceptionMethod;
   final String? notes;
   final String? intimacyNotes;
-  final bool isPeriodEndDay;  // 新增屬性
+  final bool isPeriodEndDay; // 新增屬性
 
   DailyRecord({
     this.id,
@@ -45,19 +43,20 @@ class DailyRecord {
     this.contraceptionMethod,
     this.notes,
     this.intimacyNotes,
-    this.isPeriodEndDay = false,  // 預設為 false
-  }) : symptoms = symptoms ?? {
-    '情緒變化': false,
-    '乳房脹痛': false,
-    '腰痛': false,
-    '頭痛': false,
-    '疲勞': false,
-    '痘痘': false,
-    '噁心': false,
-    '食慾改變': false,
-    '失眠': false,
-    '腹脹': false,
-  };
+    this.isPeriodEndDay = false, // 預設為 false
+  }) : symptoms = symptoms ??
+            {
+              '情緒變化': false,
+              '乳房脹痛': false,
+              '腰痛': false,
+              '頭痛': false,
+              '疲勞': false,
+              '痘痘': false,
+              '噁心': false,
+              '食慾改變': false,
+              '失眠': false,
+              '腹脹': false,
+            };
 
   Map<String, dynamic> toJson() {
     return {
@@ -72,28 +71,38 @@ class DailyRecord {
       'contraceptionMethod': contraceptionMethod?.index,
       'notes': notes,
       'intimacyNotes': intimacyNotes,
-      'isPeriodEndDay': isPeriodEndDay,  // 新增字段
+      'isPeriodEndDay': isPeriodEndDay, // 新增字段
     };
   }
 
   factory DailyRecord.fromJson(Map<String, dynamic> json) {
+    final bleedingIndex = json['bleedingLevel'] as int?;
+    final contraceptionIndex = json['contraceptionMethod'] as int?;
+    if (bleedingIndex != null &&
+        (bleedingIndex < 0 || bleedingIndex >= BleedingLevel.values.length)) {
+      throw const FormatException('出血量資料格式不正確');
+    }
+    if (contraceptionIndex != null &&
+        (contraceptionIndex < 0 ||
+            contraceptionIndex >= ContraceptionMethod.values.length)) {
+      throw const FormatException('避孕方式資料格式不正確');
+    }
     return DailyRecord(
       id: json['id'] as int?,
       date: DateTime.parse(json['date'] as String),
       hasPeriod: json['hasPeriod'] as bool? ?? false,
-      bleedingLevel: json['bleedingLevel'] != null
-          ? BleedingLevel.values[json['bleedingLevel'] as int]
-          : null,
+      bleedingLevel:
+          bleedingIndex != null ? BleedingLevel.values[bleedingIndex] : null,
       painLevel: json['painLevel'] as int?,
       symptoms: Map<String, bool>.from(json['symptoms'] ?? {}),
       hasIntimacy: json['hasIntimacy'] as bool? ?? false,
       intimacyFrequency: json['intimacyFrequency'] as int?,
-      contraceptionMethod: json['contraceptionMethod'] != null
-          ? ContraceptionMethod.values[json['contraceptionMethod'] as int]
+      contraceptionMethod: contraceptionIndex != null
+          ? ContraceptionMethod.values[contraceptionIndex]
           : null,
       notes: json['notes'] as String?,
       intimacyNotes: json['intimacyNotes'] as String?,
-      isPeriodEndDay: json['isPeriodEndDay'] as bool? ?? false,  // 新增解析
+      isPeriodEndDay: json['isPeriodEndDay'] as bool? ?? false, // 新增解析
     );
   }
 
@@ -109,7 +118,7 @@ class DailyRecord {
     ContraceptionMethod? contraceptionMethod,
     String? notes,
     String? intimacyNotes,
-    bool? isPeriodEndDay,  // 新增參數
+    bool? isPeriodEndDay, // 新增參數
   }) {
     return DailyRecord(
       id: id ?? this.id,
@@ -123,7 +132,7 @@ class DailyRecord {
       contraceptionMethod: contraceptionMethod ?? this.contraceptionMethod,
       notes: notes ?? this.notes,
       intimacyNotes: intimacyNotes ?? this.intimacyNotes,
-      isPeriodEndDay: isPeriodEndDay ?? this.isPeriodEndDay,  // 新增複製
+      isPeriodEndDay: isPeriodEndDay ?? this.isPeriodEndDay, // 新增複製
     );
   }
 }

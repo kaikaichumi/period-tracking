@@ -3,7 +3,7 @@ import 'package:intl/intl.dart';
 
 class DateUtils {
   static final DateFormat _dateFormatter = DateFormat('yyyy/MM/dd');
-  
+
   static String formatDate(DateTime date) {
     return _dateFormatter.format(date);
   }

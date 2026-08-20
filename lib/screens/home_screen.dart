@@ -1,464 +1,462 @@
-// home_screen.dart
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
-import 'package:intl/intl.dart';
-import 'package:collection/collection.dart';
+
+import '../models/daily_record.dart';
+import '../providers/user_settings_provider.dart';
 import '../services/database_service.dart';
 import '../services/prediction_service.dart';
-import '../models/user_settings.dart' as settings_model;
-import '../providers/user_settings_provider.dart' as settings_provider;
-import '../models/daily_record.dart';
 import '../widgets/add_record_sheet.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({Key? key}) : super(key: key);
+  const HomeScreen({super.key});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  // 添加所需的類別屬性
   CalendarFormat _calendarFormat = CalendarFormat.month;
-  DateTime _focusedDay = DateTime.now();
-  DateTime? _selectedDay;
-  Map<DateTime, DailyRecord> _events = {};
-  bool _isLoading = false;
-  DateTime? _currentPeriodStart;
-  List<(DateTime date, bool isPrediction)> _periodDates = [];
-  int _predictionConfidence = 50;
+  DateTime _focusedDay = _dateOnly(DateTime.now());
+  DateTime _selectedDay = _dateOnly(DateTime.now());
+  Map<DateTime, DailyRecord> _events = <DateTime, DailyRecord>{};
+  Set<DateTime> _predictedPeriodDays = <DateTime>{};
+  List<DateTime> _predictedStarts = <DateTime>[];
+  DateTime? _lastPeriodStart;
+  int? _predictionConfidence;
+  bool _isLoading = true;
+  int _loadToken = 0;
+  UserSettingsProvider? _settingsProvider;
 
   @override
   void initState() {
     super.initState();
-    _selectedDay = _focusedDay;
-    _loadEvents();
+    DatabaseService.instance.revision.addListener(_handleDataChanged);
   }
 
-  bool isSameDay(DateTime? a, DateTime? b) {
-    if (a == null || b == null) return false;
-    return a.year == b.year && a.month == b.month && a.day == b.day;
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final provider = context.read<UserSettingsProvider>();
+    if (!identical(_settingsProvider, provider)) {
+      _settingsProvider?.removeListener(_handleDataChanged);
+      _settingsProvider = provider;
+      provider.addListener(_handleDataChanged);
+      _loadEvents();
+    }
   }
+
+  @override
+  void dispose() {
+    DatabaseService.instance.revision.removeListener(_handleDataChanged);
+    _settingsProvider?.removeListener(_handleDataChanged);
+    super.dispose();
+  }
+
+  void _handleDataChanged() => _loadEvents();
 
   Future<void> _loadEvents() async {
-    setState(() => _isLoading = true);
-    try {
-      final records = await DatabaseService.instance.getAllDailyRecords();
-      
-      if (!mounted) return;
-      final settingsProvider = context.read<settings_provider.UserSettingsProvider>();
-      final settings = settings_model.UserSettings(
-        cycleLength: settingsProvider.cycleLength,
-        periodLength: settingsProvider.periodLength,
-      );
-      
-      _calculatePeriodDates(records, settings);
-      _predictionConfidence = PredictionService.getPredictionConfidence(records);
-      
-      final Map<DateTime, DailyRecord> newEvents = {};
-      for (final record in records) {
-        final date = DateTime(record.date.year, record.date.month, record.date.day);
-        newEvents[date] = record;
+    final token = ++_loadToken;
+    if (mounted && _events.isEmpty) setState(() => _isLoading = true);
 
-        if (record.hasPeriod && 
-            (_currentPeriodStart == null ||
-             record.date.isAfter(_currentPeriodStart!))) {
-          _currentPeriodStart = record.date;
-        }
-
-        // 檢查是否為經期結束日
-        if (!record.hasPeriod) {
-          final previousDay = date.subtract(const Duration(days: 1));
-          final previousRecord = records.firstWhereOrNull(
-            (r) => isSameDay(r.date, previousDay) && r.hasPeriod
-          );
-          if (previousRecord != null) {
-            newEvents[date] = record.copyWith(isPeriodEndDay: true);
-          }
-        }
-      }
-
-      setState(() {
-        _events = newEvents;
-        _isLoading = false;
-      });
-    } catch (e) {
-      print('Error loading events: $e');
-      setState(() => _isLoading = false);
-    }
-  }
-
-  void _calculatePeriodDates(List<DailyRecord> records, settings_model.UserSettings settings) {
-    _periodDates = [];
-    
-    final actualPeriods = PredictionService.findPeriodDetails(records);
-    for (var period in actualPeriods) {
-      for (int i = 0; i < period.$2; i++) {
-        _periodDates.add((
-          period.$1.add(Duration(days: i)),
-          false
-        ));
-      }
-    }
-
+    final records = await DatabaseService.instance.getAllDailyRecords();
+    if (!mounted || token != _loadToken) return;
+    final settings = context.read<UserSettingsProvider>().settings;
+    final periodDetails = PredictionService.findPeriodDetails(records);
     final predictions = PredictionService.predictNextPeriods(records, settings);
-    final averagePeriodLength = actualPeriods.isEmpty 
+    final averagePeriodLength = periodDetails.isEmpty
         ? settings.periodLength
-        : (actualPeriods.map((p) => p.$2).reduce((a, b) => a + b) / actualPeriods.length).round();
-    
-    for (var predictedStart in predictions) {
-      for (int i = 0; i < averagePeriodLength; i++) {
-        _periodDates.add((
-          predictedStart.add(Duration(days: i)),
-          true
-        ));
+        : (periodDetails.map((period) => period.$2).reduce((a, b) => a + b) /
+                periodDetails.length)
+            .round();
+    final predictionDays = <DateTime>{};
+    for (final start in predictions) {
+      for (var offset = 0; offset < averagePeriodLength; offset++) {
+        predictionDays.add(_dateOnly(start.add(Duration(days: offset))));
       }
     }
+
+    setState(() {
+      _events = <DateTime, DailyRecord>{
+        for (final record in records) _dateOnly(record.date): record,
+      };
+      _predictedPeriodDays = predictionDays;
+      _predictedStarts = predictions;
+      _lastPeriodStart = periodDetails.isEmpty ? null : periodDetails.last.$1;
+      _predictionConfidence =
+          PredictionService.getPredictionConfidence(records);
+      _isLoading = false;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('月經週期追蹤'),
-        centerTitle: true,
-        actions: [
-          if (_predictionConfidence < 100)
-            Tooltip(
-              message: '預測準確度',
-              child: Container(
-                margin: const EdgeInsets.only(right: 16),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 4,
+        title: const Text('LunaCare'),
+        centerTitle: false,
+      ),
+      body: RefreshIndicator(
+        onRefresh: _loadEvents,
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.only(bottom: 96),
+                children: <Widget>[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                    child: _buildStatusCard(),
+                  ),
+                  _buildCalendar(),
+                  _buildLegend(),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    child: _buildSelectedDayCard(),
+                  ),
+                ],
+              ),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _showAddRecordSheet(_selectedDay),
+        icon: const Icon(Icons.edit_calendar_outlined),
+        label: const Text('記錄這一天'),
+      ),
+    );
+  }
+
+  Widget _buildStatusCard() {
+    final colors = Theme.of(context).colorScheme;
+    if (_lastPeriodStart == null) {
+      return Card(
+        color: colors.primaryContainer,
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                '先記下最近一次經期',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: colors.onPrimaryContainer,
+                    ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '有了第一筆經期日期後，才會顯示個人化預估；目前不會用今天自動猜測。',
+                style: TextStyle(color: colors.onPrimaryContainer),
+              ),
+              const SizedBox(height: 12),
+              FilledButton.tonalIcon(
+                onPressed: _pickFirstPeriodDate,
+                icon: const Icon(Icons.calendar_month),
+                label: const Text('選擇日期'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final next = _predictedStarts.isEmpty ? null : _predictedStarts.first;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(Icons.water_drop_outlined, color: colors.primary),
+                const SizedBox(width: 8),
+                Text(
+                  '你的週期摘要',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                 ),
-                decoration: BoxDecoration(
-                  color: _getConfidenceColor(_predictionConfidence),
-                  borderRadius: BorderRadius.circular(12),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 24,
+              runSpacing: 12,
+              children: <Widget>[
+                _StatusValue(
+                  label: '最近一次開始',
+                  value: DateFormat('yyyy/MM/dd').format(_lastPeriodStart!),
                 ),
-                child: Text(
-                  '${_predictionConfidence}%',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
+                if (next != null)
+                  _StatusValue(
+                    label: '下次預估',
+                    value: DateFormat('yyyy/MM/dd').format(next),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Icon(Icons.info_outline, size: 18, color: colors.secondary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _predictionConfidence == null
+                        ? '目前依你的週期設定估算；至少記錄 3 次經期開始日後，才會顯示可信度。'
+                        : '依過去週期規律性估算，預測可信度 ${_predictionConfidence!}%。',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
-              ),
+              ],
             ),
-        ],
-      ),
-      body: Column(
-        children: [
-          TableCalendar(
-            firstDay: DateTime.utc(2020, 1, 1),
-            lastDay: DateTime.utc(2030, 12, 31),
-            focusedDay: _focusedDay,
-            selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-            calendarFormat: _calendarFormat,
-            onDaySelected: (selectedDay, focusedDay) {
-              setState(() {
-                _selectedDay = selectedDay;
-                _focusedDay = focusedDay;
-              });
-            },
-            onFormatChanged: (format) {
-              if (_calendarFormat != format) {
-                setState(() {
-                  _calendarFormat = format;
-                });
-              }
-            },
-            onPageChanged: (focusedDay) {
-              _focusedDay = focusedDay;
-            },
-            calendarBuilders: CalendarBuilders(
-              markerBuilder: (context, date, events) {
-                final normalizedDate = DateTime(date.year, date.month, date.day);
-
-                if (_events.containsKey(normalizedDate)) {
-                  return _buildMarker(_events[normalizedDate]!);
-                }
-
-                final periodInfo = _periodDates.firstWhereOrNull(
-                  (pd) => isSameDay(pd.$1, normalizedDate)
-                );
-                
-                if (periodInfo != null) {
-                  return _buildPeriodMarker(periodInfo.$2);
-                }
-
-                return null;
-              },
-            ),
-            calendarStyle: const CalendarStyle(
-              selectedDecoration: BoxDecoration(
-                color: Colors.pink,
-                shape: BoxShape.circle,
-              ),
-              todayDecoration: BoxDecoration(
-                color: Colors.pinkAccent,
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          if (_isLoading)
-            const Expanded(
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else
-            Expanded(
-              child: _buildEventList(),
-            ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _showAddRecordSheet(_selectedDay ?? _focusedDay),
-        child: const Icon(Icons.add),
-        backgroundColor: Colors.pink,
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildMarker(DailyRecord record) {
-    if (record.hasPeriod || record.isPeriodEndDay) {
-      return Positioned(
-        bottom: 1,
-        child: Container(
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.pink,
-          ),
-          width: 8,
-          height: 8,
-        ),
-      );
-    }
-    
-    if (record.hasIntimacy) {
-      return Positioned(
-        bottom: 1,
-        child: Container(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.purple[300],
-          ),
-          width: 8,
-          height: 8,
-        ),
-      );
-    } 
-    
-    if (record.symptoms.values.any((v) => v)) {
-      return Positioned(
-        bottom: 1,
-        child: Container(
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.orange,
-          ),
-          width: 8,
-          height: 8,
-        ),
-      );
-    }
-
-    return Container();
-  }
-
-  Widget _buildPeriodMarker(bool isPrediction) {
-    return Positioned(
-      bottom: 1,
-      child: Container(
-        decoration: BoxDecoration(
+  Widget _buildCalendar() {
+    final now = DateTime.now();
+    return TableCalendar<void>(
+      locale: 'zh_TW',
+      firstDay: DateTime(now.year - 10),
+      lastDay: DateTime(now.year + 10, 12, 31),
+      focusedDay: _focusedDay,
+      selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+      calendarFormat: _calendarFormat,
+      availableCalendarFormats: const <CalendarFormat, String>{
+        CalendarFormat.month: '月',
+        CalendarFormat.twoWeeks: '兩週',
+        CalendarFormat.week: '週',
+      },
+      onDaySelected: (selectedDay, focusedDay) {
+        setState(() {
+          _selectedDay = _dateOnly(selectedDay);
+          _focusedDay = focusedDay;
+        });
+      },
+      onFormatChanged: (format) => setState(() => _calendarFormat = format),
+      onPageChanged: (focusedDay) => _focusedDay = focusedDay,
+      calendarBuilders: CalendarBuilders<void>(
+        markerBuilder: (context, date, events) => _buildMarkers(date),
+      ),
+      calendarStyle: CalendarStyle(
+        selectedDecoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primary,
           shape: BoxShape.circle,
-          color: isPrediction ? Colors.pink[50] : Colors.pink,
-          border: isPrediction ? Border.all(
-            color: Colors.pink[300]!,
-            width: 1,
-          ) : null,
         ),
-        width: 8,
-        height: 8,
+        todayDecoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primaryContainer,
+          shape: BoxShape.circle,
+        ),
+        todayTextStyle: TextStyle(
+          color: Theme.of(context).colorScheme.onPrimaryContainer,
+        ),
+        outsideDaysVisible: false,
+      ),
+      headerStyle: const HeaderStyle(
+        titleCentered: true,
+        formatButtonShowsNext: false,
       ),
     );
   }
 
-  Color _getConfidenceColor(int confidence) {
-    if (confidence >= 80) return Colors.green;
-    if (confidence >= 60) return Colors.orange;
-    return Colors.red;
+  Widget? _buildMarkers(DateTime date) {
+    final normalized = _dateOnly(date);
+    final record = _events[normalized];
+    final colors = <Color>[];
+    if (record?.hasPeriod ?? false) {
+      colors.add(Theme.of(context).colorScheme.primary);
+    }
+    if (_predictedPeriodDays.contains(normalized) &&
+        !(record?.hasPeriod ?? false)) {
+      colors.add(Theme.of(context).colorScheme.primary.withValues(alpha: 0.35));
+    }
+    if (record?.symptoms.values.any((value) => value) ?? false) {
+      colors.add(Colors.orange);
+    }
+    if (record?.hasIntimacy ?? false) {
+      colors.add(Colors.purple);
+    }
+    if (colors.isEmpty) return null;
+
+    return Positioned(
+      bottom: 3,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: colors.take(3).map((color) {
+          return Container(
+            width: 5,
+            height: 5,
+            margin: const EdgeInsets.symmetric(horizontal: 1),
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          );
+        }).toList(),
+      ),
+    );
   }
 
-  void _showAddRecordSheet(DateTime date) {
-    showModalBottomSheet(
+  Widget _buildLegend() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Wrap(
+        spacing: 14,
+        runSpacing: 6,
+        children: <Widget>[
+          _LegendItem(color: Theme.of(context).colorScheme.primary, text: '經期'),
+          _LegendItem(
+            color:
+                Theme.of(context).colorScheme.primary.withValues(alpha: 0.35),
+            text: '預估',
+          ),
+          const _LegendItem(color: Colors.orange, text: '症狀'),
+          const _LegendItem(color: Colors.purple, text: '性行為'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSelectedDayCard() {
+    final record = _events[_selectedDay];
+    final isPrediction = _predictedPeriodDays.contains(_selectedDay) &&
+        !(record?.hasPeriod ?? false);
+    final activeSymptoms = record?.symptoms.entries
+            .where((entry) => entry.value)
+            .map((entry) => entry.key)
+            .toList() ??
+        <String>[];
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    DateFormat('M 月 d 日 EEEE', 'zh_TW').format(_selectedDay),
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                ),
+                if (record != null)
+                  IconButton(
+                    tooltip: '編輯記錄',
+                    onPressed: () => _showAddRecordSheet(_selectedDay),
+                    icon: const Icon(Icons.edit_outlined),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (record == null) ...<Widget>[
+              Text(isPrediction ? '這天在預估經期範圍內，尚未有實際記錄。' : '這天尚未有記錄。'),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () => _showAddRecordSheet(_selectedDay),
+                icon: const Icon(Icons.add),
+                label: const Text('新增記錄'),
+              ),
+            ] else ...<Widget>[
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: <Widget>[
+                  if (record.hasPeriod)
+                    Chip(
+                      avatar: const Icon(Icons.water_drop, size: 18),
+                      label: Text(
+                        '經期 · ${_bleedingLevelToString(record.bleedingLevel)}',
+                      ),
+                    ),
+                  if (record.painLevel != null)
+                    Chip(label: Text('疼痛 ${record.painLevel}/10')),
+                  if (activeSymptoms.isNotEmpty)
+                    Chip(label: Text(activeSymptoms.join('、'))),
+                  if (record.hasIntimacy)
+                    Chip(label: Text('性行為 ${record.intimacyFrequency ?? 1} 次')),
+                ],
+              ),
+              if (record.notes?.isNotEmpty ?? false) ...<Widget>[
+                const SizedBox(height: 12),
+                Text(record.notes!),
+              ],
+              if (!record.hasPeriod &&
+                  activeSymptoms.isEmpty &&
+                  !record.hasIntimacy &&
+                  !(record.notes?.isNotEmpty ?? false))
+                const Text('已儲存一筆空白日記錄。'),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickFirstPeriodDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDay,
+      firstDate: DateTime(now.year - 2),
+      lastDate: now,
+      helpText: '選擇最近一次有經血的日期',
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _selectedDay = _dateOnly(picked);
+      _focusedDay = picked;
+    });
+    _showAddRecordSheet(picked, initialHasPeriod: true);
+  }
+
+  Future<void> _showAddRecordSheet(
+    DateTime date, {
+    bool initialHasPeriod = false,
+  }) async {
+    final normalized = _dateOnly(date);
+    final existingRecord = _events[normalized];
+    await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      isDismissible: true,
       backgroundColor: Colors.transparent,
-      builder: (BuildContext context) {
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
-          ),
-          child: AddRecordSheet(
-            selectedDate: date,
-            existingRecord: _events[date],
-            onSave: (record) async {
-              await DatabaseService.instance.saveDailyRecord(record);
-              await _loadEvents();  // 重新載入資料以更新顯示
-            }, onDelete: () {  },
-          ),
-        );
-      },
-    );
-  }
-
-
-  Widget _buildEventList() {
-    final selectedDate = _selectedDay ?? _focusedDay;
-    final eventDate = DateTime(
-      selectedDate.year,
-      selectedDate.month,
-      selectedDate.day,
-    );
-    
-    final record = _events[eventDate];
-    final periodInfo = _periodDates.firstWhereOrNull(
-      (pd) => isSameDay(pd.$1, eventDate)
-    );
-
-    if (record == null) {
-      return Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          if (_currentPeriodStart != null) Text(
-            '目前週期開始於：${DateFormat('yyyy/MM/dd').format(_currentPeriodStart!)}',
-            style: const TextStyle(fontSize: 16),
-          ),
-          if (periodInfo != null && periodInfo.$2) ...[
-            const SizedBox(height: 8),
-            Text(
-              '預測經期日期',
-              style: TextStyle(
-                fontSize: 16,
-                color: Colors.pink[300],
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '準確度: $_predictionConfidence%',
-              style: TextStyle(
-                fontSize: 14,
-                color: _getConfidenceColor(_predictionConfidence),
-              ),
-            ),
-          ],
-          if (periodInfo == null && _currentPeriodStart == null)
-            const Text('點擊右下角按鈕來記錄'),
-        ],
-      );
-    }
-
-    return ListView(
-      padding: const EdgeInsets.all(8),
-      children: [
-        if (record.hasPeriod || record.isPeriodEndDay) _buildPeriodCard(record),
-        if (record.symptoms.values.any((v) => v)) _buildSymptomsCard(record),
-        if (record.hasIntimacy) _buildIntimacyCard(record),
-        if (record.notes?.isNotEmpty ?? false) _buildNotesCard(record),
-      ],
-    );
-  }
-
-  // ... 其餘的卡片建構方法保持不變 ...
-
-  Widget _buildPeriodCard(DailyRecord record) {
-    return Card(
-      child: ListTile(
-        title: Text(
-          '月經記錄',
-          style: TextStyle(
-            color: Colors.pink[700],
-            fontWeight: FontWeight.bold,
-          ),
+      builder: (sheetContext) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(sheetContext).bottom,
         ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (record.bleedingLevel != null)
-              Text('出血量：${_bleedingLevelToString(record.bleedingLevel!)}'),
-            if (record.painLevel != null)
-              Text('經痛程度：${record.painLevel}/10'),
-          ],
-        ),
-        trailing: IconButton(
-          icon: const Icon(Icons.edit),
-          onPressed: () => _showAddRecordSheet(_selectedDay!),
+        child: AddRecordSheet(
+          selectedDate: normalized,
+          existingRecord: existingRecord,
+          initialHasPeriod: initialHasPeriod,
+          onSave: DatabaseService.instance.saveDailyRecord,
+          onDelete: existingRecord == null
+              ? null
+              : () async {
+                  await DatabaseService.instance.deleteDailyRecord(normalized);
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: const Text('記錄已刪除'),
+                      action: SnackBarAction(
+                        label: '復原',
+                        onPressed: () {
+                          DatabaseService.instance
+                              .saveDailyRecord(existingRecord);
+                        },
+                      ),
+                    ),
+                  );
+                },
         ),
       ),
     );
   }
 
-  Widget _buildSymptomsCard(DailyRecord record) {
-    final activeSymptoms = record.symptoms.entries
-        .where((e) => e.value)
-        .map((e) => e.key)
-        .toList();
-
-    return Card(
-      child: ListTile(
-        title: const Text(
-          '症狀',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        subtitle: Text(activeSymptoms.join('、')),
-      ),
-    );
-  }
-
-  Widget _buildIntimacyCard(DailyRecord record) {
-    return Card(
-      child: ListTile(
-        title: const Text(
-          '親密關係記錄',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('次數：${record.intimacyFrequency ?? 1}'),
-            if (record.contraceptionMethod != null)
-              Text('避孕方式：${_contraceptionMethodToString(record.contraceptionMethod!)}'),
-            if (record.intimacyNotes?.isNotEmpty ?? false)
-              Text('備註：${record.intimacyNotes}'),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNotesCard(DailyRecord record) {
-    return Card(
-      child: ListTile(
-        title: const Text(
-          '備註',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        subtitle: Text(record.notes!),
-      ),
-    );
-  }
-
-  String _bleedingLevelToString(BleedingLevel level) {
+  String _bleedingLevelToString(BleedingLevel? level) {
     switch (level) {
       case BleedingLevel.spotting:
         return '點滴';
@@ -468,27 +466,59 @@ class _HomeScreenState extends State<HomeScreen> {
         return '中';
       case BleedingLevel.heavy:
         return '多';
-      default:
-        return '無';
+      case BleedingLevel.none:
+      case null:
+        return '未填';
     }
   }
 
-  String _contraceptionMethodToString(ContraceptionMethod method) {
-    switch (method) {
-      case ContraceptionMethod.none:
-        return '無避孕措施';
-      case ContraceptionMethod.condom:
-        return '保險套';
-      case ContraceptionMethod.pill:
-        return '口服避孕藥';
-      case ContraceptionMethod.iud:
-        return '子宮內避孕器';
-      case ContraceptionMethod.calendar:
-        return '安全期計算';
-      case ContraceptionMethod.withdrawal:
-        return '體外射精';
-      case ContraceptionMethod.other:
-        return '其他';
-    }
+  static DateTime _dateOnly(DateTime date) =>
+      DateTime(date.year, date.month, date.day);
+}
+
+class _StatusValue extends StatelessWidget {
+  const _StatusValue({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LegendItem extends StatelessWidget {
+  const _LegendItem({required this.color, required this.text});
+
+  final Color color;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Text(text, style: Theme.of(context).textTheme.bodySmall),
+      ],
+    );
   }
 }

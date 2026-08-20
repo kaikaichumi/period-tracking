@@ -4,7 +4,7 @@ class AppConstants {
   static const String prefsCycleLength = 'cycle_length';
   static const String prefsNotificationsEnabled = 'notifications_enabled';
   static const String prefsReminderTime = 'reminder_time';
-  
+
   // 預設值
   static const int defaultCycleLength = 28;
   static const int defaultPeriodLength = 5;

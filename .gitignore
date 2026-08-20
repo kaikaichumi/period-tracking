@@ -41,3 +41,15 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+/android/build/
+
+# Keystore files
+*.jks
+*.keystore
+keystore.properties
+key.properties
+/keystore-backup/
+
+# Other sensitive files
+local.properties
+.gstack/

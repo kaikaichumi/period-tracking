@@ -1,6 +1,5 @@
-package com.example.period_tracking
+package com.techcare.lunacare
 
 import io.flutter.embedding.android.FlutterActivity
 
-class MainActivity: FlutterActivity() {
-}
+class MainActivity: FlutterActivity(){}

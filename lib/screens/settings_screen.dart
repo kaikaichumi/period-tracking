@@ -1,577 +1,534 @@
-// lib/screens/settings_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../providers/user_settings_provider.dart';
 import '../services/backup_service.dart';
+import '../services/database_service.dart';
+import '../services/notification_service.dart';
 import '../utils/constants.dart';
 
-class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({Key? key}) : super(key: key);
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  bool _isBusy = false;
+  bool _isCheckingSignIn = true;
+  bool _isSignedIn = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshSignInState();
+  }
+
+  Future<void> _refreshSignInState() async {
+    final signedIn = await BackupService.instance.isSignedIn();
+    if (!mounted) return;
+    setState(() {
+      _isSignedIn = signedIn;
+      _isCheckingSignIn = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<UserSettingsProvider>(
-      builder: (context, settings, child) {
-        return Column(
-          children: [
-            AppBar(
-              title: const Text('設定'),
-              centerTitle: true,
-            ),
-            Expanded(
-              child: ListView(
-                children: [
-                  // 週期設定
-                  _buildSection(
-                    title: '週期設定',
-                    children: [
-                      ListTile(
-                        title: const Text('週期長度'),
-                        subtitle: Text('${settings.cycleLength} 天'),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => _showCycleLengthDialog(context, settings),
-                      ),
-                      ListTile(
-                        title: const Text('經期長度'),
-                        subtitle: Text('${settings.periodLength} 天'),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => _showPeriodLengthDialog(context, settings),
-                      ),
-                    ],
+    final settings = context.watch<UserSettingsProvider>();
+    return Scaffold(
+      appBar: AppBar(title: const Text('設定')),
+      body: Stack(
+        children: <Widget>[
+          ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+            children: <Widget>[
+              _section(
+                title: '週期設定',
+                icon: Icons.calendar_month_outlined,
+                children: <Widget>[
+                  ListTile(
+                    title: const Text('平均週期長度'),
+                    subtitle: const Text('從一次經期開始到下一次開始'),
+                    trailing: Text('${settings.cycleLength} 天'),
+                    onTap: _isBusy ? null : () => _editCycleLength(settings),
                   ),
-
-                  // 通知設定
-                  _buildSection(
-                    title: '通知設定',
-                    children: [
-                      SwitchListTile(
-                        title: const Text('啟用通知'),
-                        value: settings.notificationsEnabled,
-                        onChanged: (bool value) {
-                          settings.updateNotificationsEnabled(value);
-                        },
-                      ),
-                      if (settings.notificationsEnabled) ...[
-                        ListTile(
-                          title: const Text('提醒時間'),
-                          subtitle: Text(
-                            '${settings.reminderTime.hour.toString().padLeft(2, '0')}:'
-                            '${settings.reminderTime.minute.toString().padLeft(2, '0')}',
-                          ),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () => _selectTime(context, settings),
-                        ),
-                        ListTile(
-                          title: const Text('提醒時間點'),
-                          subtitle: _buildReminderDaysText(settings.reminderDays),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () => _showReminderDaysDialog(context, settings),
-                        ),
-                      ],
-                    ],
-                  ),
-
-                  // 備份設定
-                  _buildSection(
-                    title: '備份設定',
-                    children: [
-                      ListTile(
-                        title: const Text('Google 雲端備份'),
-                        subtitle: FutureBuilder<bool>(
-                          future: BackupService.instance.isSignedIn(),
-                          builder: (context, snapshot) {
-                            if (snapshot.hasData && snapshot.data!) {
-                              return const Text('已登入 Google 帳號');
-                            }
-                            return const Text('尚未登入 Google 帳號');
-                          },
-                        ),
-                        trailing: const Icon(Icons.cloud),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                icon: const Icon(Icons.backup),
-                                label: const Text('備份'),
-                                onPressed: () => _handleBackup(context),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                icon: const Icon(Icons.restore),
-                                label: const Text('還原'),
-                                onPressed: () => _handleRestore(context),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Center(
-                        child: TextButton(
-                          onPressed: () => _handleSignInOut(context),
-                          child: FutureBuilder<bool>(
-                            future: BackupService.instance.isSignedIn(),
-                            builder: (context, snapshot) {
-                              if (snapshot.hasData && snapshot.data!) {
-                                return const Text('登出 Google 帳號');
-                              }
-                              return const Text('登入 Google 帳號');
-                            },
-                          ),
-                        ),
-                      ),
-                    ],
+                  ListTile(
+                    title: const Text('平均經期長度'),
+                    subtitle: const Text('一次經期通常持續的天數'),
+                    trailing: Text('${settings.periodLength} 天'),
+                    onTap: _isBusy ? null : () => _editPeriodLength(settings),
                   ),
                 ],
               ),
-            ),
-          ],
-        );
-      },
+              const SizedBox(height: 12),
+              _section(
+                title: '提醒',
+                icon: Icons.notifications_none,
+                children: <Widget>[
+                  SwitchListTile(
+                    title: const Text('經期預估提醒'),
+                    subtitle: Text(
+                      NotificationService.instance.isSupported
+                          ? '只有在已有經期記錄時才會安排提醒'
+                          : '目前平台不支援本機通知',
+                    ),
+                    value: settings.notificationsEnabled &&
+                        NotificationService.instance.isSupported,
+                    onChanged: _isBusy ||
+                            !NotificationService.instance.isSupported
+                        ? null
+                        : (enabled) => _toggleNotifications(settings, enabled),
+                  ),
+                  if (settings.notificationsEnabled &&
+                      NotificationService.instance.isSupported) ...<Widget>[
+                    ListTile(
+                      title: const Text('提醒時間'),
+                      trailing: Text(settings.reminderTime.format(context)),
+                      onTap: _isBusy ? null : () => _selectTime(settings),
+                    ),
+                    ListTile(
+                      title: const Text('提醒日'),
+                      subtitle: Text(_reminderDaysText(settings.reminderDays)),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap:
+                          _isBusy ? null : () => _selectReminderDays(settings),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.send_outlined),
+                      title: const Text('傳送測試通知'),
+                      onTap: _isBusy ? null : _sendTestNotification,
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 12),
+              _section(
+                title: '私人備份',
+                icon: Icons.cloud_outlined,
+                children: <Widget>[
+                  ListTile(
+                    title: const Text('Google Drive App Data'),
+                    subtitle: Text(
+                      _isCheckingSignIn
+                          ? '正在檢查登入狀態…'
+                          : _isSignedIn
+                              ? '已登入；備份只會存放在此 App 的私人資料夾'
+                              : '尚未登入 Google 帳號',
+                    ),
+                    trailing: _isCheckingSignIn
+                        ? const SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            _isSignedIn
+                                ? Icons.cloud_done_outlined
+                                : Icons.cloud_off_outlined,
+                          ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: FilledButton.tonalIcon(
+                            onPressed: _isBusy || !_isSignedIn
+                                ? null
+                                : () => _backup(settings),
+                            icon: const Icon(Icons.backup_outlined),
+                            label: const Text('建立備份'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _isBusy || !_isSignedIn
+                                ? null
+                                : () => _restore(settings),
+                            icon: const Icon(Icons.restore),
+                            label: const Text('還原最新'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      _isSignedIn ? Icons.logout : Icons.login,
+                    ),
+                    title: Text(_isSignedIn ? '登出 Google 帳號' : '登入 Google 帳號'),
+                    onTap: _isBusy || _isCheckingSignIn
+                        ? null
+                        : _toggleGoogleSignIn,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _section(
+                title: '資料與隱私',
+                icon: Icons.lock_outline,
+                children: <Widget>[
+                  const ListTile(
+                    title: Text('資料儲存方式'),
+                    subtitle: Text(
+                      '每日記錄預設只保存在這台裝置。只有你主動建立備份時，才會上傳到 Google Drive 的 App 私人資料夾。',
+                    ),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.restart_alt),
+                    title: const Text('重設所有設定'),
+                    subtitle: const Text('不會刪除每日記錄'),
+                    onTap: _isBusy ? null : () => _resetSettings(settings),
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      Icons.delete_forever_outlined,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    title: Text(
+                      '刪除裝置上的所有記錄',
+                      style:
+                          TextStyle(color: Theme.of(context).colorScheme.error),
+                    ),
+                    subtitle: const Text('此操作無法復原；雲端備份不會被刪除'),
+                    onTap: _isBusy ? null : _clearAllRecords,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text(
+                '週期預估僅供自我觀察，不是避孕工具，也不能取代醫療診斷。若有異常出血、劇烈疼痛或其他疑慮，請尋求專業醫療協助。',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+          if (_isBusy) const LinearProgressIndicator(),
+        ],
+      ),
     );
   }
 
-  Widget _buildSection({
+  Widget _section({
     required String title,
+    required IconData icon,
     required List<Widget> children,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Text(
-            title,
-            style: const TextStyle(
-              color: Colors.grey,
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+            child: Row(
+              children: <Widget>[
+                Icon(icon,
+                    size: 20, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+              ],
             ),
           ),
-        ),
-        ...children,
-        const Divider(),
-      ],
+          ...children,
+        ],
+      ),
     );
   }
 
-  Widget _buildReminderDaysText(Set<int> days) {
-    if (days.isEmpty) return const Text('未設定');
-    
-    final List<String> descriptions = [];
-    if (days.contains(7)) descriptions.add('一週前');
-    if (days.contains(3)) descriptions.add('三天前');
-    if (days.contains(1)) descriptions.add('一天前');
-    if (days.contains(0)) descriptions.add('當天');
-    
-    return Text(descriptions.join('、'));
+  Future<void> _editCycleLength(UserSettingsProvider settings) async {
+    final value = await _showNumberDialog(
+      title: '平均週期長度',
+      initialValue: settings.cycleLength,
+      min: AppConstants.minCycleLength,
+      max: AppConstants.maxCycleLength,
+      helperText:
+          '請輸入 ${AppConstants.minCycleLength}–${AppConstants.maxCycleLength} 天',
+    );
+    if (value != null) await _run(() => settings.updateCycleLength(value));
   }
 
-  Future<void> _selectTime(BuildContext context, UserSettingsProvider settings) async {
-    final TimeOfDay? picked = await showTimePicker(
+  Future<void> _editPeriodLength(UserSettingsProvider settings) async {
+    final value = await _showNumberDialog(
+      title: '平均經期長度',
+      initialValue: settings.periodLength,
+      min: 1,
+      max: 10,
+      helperText: '請輸入 1–10 天',
+    );
+    if (value != null) await _run(() => settings.updatePeriodLength(value));
+  }
+
+  Future<int?> _showNumberDialog({
+    required String title,
+    required int initialValue,
+    required int min,
+    required int max,
+    required String helperText,
+  }) async {
+    final controller = TextEditingController(text: initialValue.toString());
+    String? errorText;
+    final result = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(title),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: '天數',
+              suffixText: '天',
+              helperText: helperText,
+              errorText: errorText,
+            ),
+            onSubmitted: (_) {
+              final value = int.tryParse(controller.text.trim());
+              if (value == null || value < min || value > max) {
+                setDialogState(() => errorText = helperText);
+              } else {
+                Navigator.pop(dialogContext, value);
+              }
+            },
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final value = int.tryParse(controller.text.trim());
+                if (value == null || value < min || value > max) {
+                  setDialogState(() => errorText = helperText);
+                  return;
+                }
+                Navigator.pop(dialogContext, value);
+              },
+              child: const Text('儲存'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    return result;
+  }
+
+  Future<void> _toggleNotifications(
+    UserSettingsProvider settings,
+    bool enabled,
+  ) async {
+    if (enabled) {
+      final granted = await NotificationService.instance.requestPermissions();
+      if (!granted) {
+        _showMessage('未取得通知權限，提醒未開啟。');
+        return;
+      }
+    }
+    await _run(
+      () => settings.updateNotificationsEnabled(enabled),
+      successMessage: enabled ? '提醒已開啟' : '提醒已關閉',
+    );
+  }
+
+  Future<void> _selectTime(UserSettingsProvider settings) async {
+    final picked = await showTimePicker(
       context: context,
       initialTime: settings.reminderTime,
     );
-    if (picked != null) {
-      await settings.updateReminderTime(picked);
+    if (picked != null) await _run(() => settings.updateReminderTime(picked));
+  }
+
+  Future<void> _selectReminderDays(UserSettingsProvider settings) async {
+    final selected = Set<int>.from(settings.reminderDays);
+    final result = await showDialog<Set<int>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('選擇提醒日'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              for (final option in const <(int, String)>[
+                (7, '一週前'),
+                (3, '三天前'),
+                (1, '一天前'),
+                (0, '當天'),
+              ])
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(option.$2),
+                  value: selected.contains(option.$1),
+                  onChanged: (checked) {
+                    setDialogState(() {
+                      if (checked ?? false) {
+                        selected.add(option.$1);
+                      } else {
+                        selected.remove(option.$1);
+                      }
+                    });
+                  },
+                ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, selected),
+              child: const Text('儲存'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result != null) await _run(() => settings.updateReminderDays(result));
+  }
+
+  String _reminderDaysText(Set<int> days) {
+    if (days.isEmpty) return '未選擇提醒日';
+    const labels = <int, String>{0: '當天', 1: '一天前', 3: '三天前', 7: '一週前'};
+    final sorted = days.toList()..sort((a, b) => b.compareTo(a));
+    return sorted.map((day) => labels[day]).whereType<String>().join('、');
+  }
+
+  Future<void> _sendTestNotification() async {
+    final granted = await NotificationService.instance.checkPermissions();
+    if (!granted) {
+      _showMessage('系統通知權限目前未開啟。');
+      return;
     }
-  }
-
-  Future<void> _showCycleLengthDialog(
-    BuildContext context,
-    UserSettingsProvider settings,
-  ) async {
-    final TextEditingController controller = TextEditingController(
-      text: settings.cycleLength.toString(),
-    );
-
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('設定週期長度'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: controller,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: '天數',
-                suffix: Text('天'),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '建議範圍：${AppConstants.minCycleLength}-${AppConstants.maxCycleLength} 天',
-              style: const TextStyle(color: Colors.grey, fontSize: 12),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              final newLength = int.tryParse(controller.text);
-              if (newLength != null && newLength > 0) {
-                settings.updateCycleLength(newLength);
-              }
-              Navigator.pop(context);
-            },
-            child: const Text('確定'),
-          ),
-        ],
-      ),
+    await _run(
+      NotificationService.instance.showTestNotification,
+      successMessage: '測試通知已送出',
     );
   }
 
-  Future<void> _showPeriodLengthDialog(
-    BuildContext context,
-    UserSettingsProvider settings,
-  ) async {
-    final TextEditingController controller = TextEditingController(
-      text: settings.periodLength.toString(),
-    );
-
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('設定經期長度'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: controller,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: '天數',
-                suffix: Text('天'),
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              '建議範圍：3-7 天',
-              style: TextStyle(color: Colors.grey, fontSize: 12),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              final newLength = int.tryParse(controller.text);
-              if (newLength != null && newLength > 0) {
-                settings.updatePeriodLength(newLength);
-              }
-              Navigator.pop(context);
-            },
-            child: const Text('確定'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showReminderDaysDialog(
-    BuildContext context,
-    UserSettingsProvider settings,
-  ) async {
-    Set<int> selectedDays = Set.from(settings.reminderDays);
-
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('選擇提醒時間'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CheckboxListTile(
-              title: const Text('一週前'),
-              value: selectedDays.contains(7),
-              onChanged: (checked) {
-                if (checked ?? false) {
-                  selectedDays.add(7);
-                } else {
-                  selectedDays.remove(7);
-                }
-                settings.updateReminderDays(selectedDays);
-              },
-            ),
-            CheckboxListTile(
-              title: const Text('三天前'),
-              value: selectedDays.contains(3),
-              onChanged: (checked) {
-                if (checked ?? false) {
-                  selectedDays.add(3);
-                } else {
-                  selectedDays.remove(3);
-                }
-                settings.updateReminderDays(selectedDays);
-              },
-            ),
-            CheckboxListTile(
-              title: const Text('一天前'),
-              value: selectedDays.contains(1),
-              onChanged: (checked) {
-                if (checked ?? false) {
-                  selectedDays.add(1);
-                } else {
-                  selectedDays.remove(1);
-                }
-                settings.updateReminderDays(selectedDays);
-              },
-            ),
-            CheckboxListTile(
-              title: const Text('當天'),
-              value: selectedDays.contains(0),
-              onChanged: (checked) {
-                if (checked ?? false) {
-                  selectedDays.add(0);
-                } else {
-                  selectedDays.remove(0);
-                }
-                settings.updateReminderDays(selectedDays);
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('確定'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _handleSignInOut(BuildContext context) async {
-    try {
-      final isSignedIn = await BackupService.instance.isSignedIn();
-      if (isSignedIn) {
+  Future<void> _toggleGoogleSignIn() async {
+    final signingIn = !_isSignedIn;
+    await _run(() async {
+      if (_isSignedIn) {
         await BackupService.instance.signOut();
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('已登出 Google 帳號')),
-          );
-        }
       } else {
         await BackupService.instance.signIn();
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('已登入 Google 帳號')),
-          );
-        }
       }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('操作失敗: $e')),
-        );
-      }
-    }
+      await _refreshSignInState();
+    }, successMessage: signingIn ? '已登入 Google 帳號' : '已登出 Google 帳號');
   }
 
-  Future<void> _handleBackup(BuildContext context) async {
-    try {
-      final isSignedIn = await BackupService.instance.isSignedIn();
-      if (!isSignedIn) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('請先登入 Google 帳號')),
-          );
-        }
-        return;
-      }
+  Future<void> _backup(UserSettingsProvider settings) async {
+    final confirmed = await _confirm(
+      title: '建立新的雲端備份？',
+      message: '這會新增一份含目前每日記錄與設定的私人備份，不會覆蓋舊備份。',
+      confirmText: '建立備份',
+    );
+    if (!confirmed) return;
+    await _run(
+      () => BackupService.instance.backup(settings),
+      successMessage: '備份已建立',
+    );
+  }
 
-      // 顯示確認對話框
-      if (context.mounted) {
-        final confirm = await showDialog<bool>(
+  Future<void> _restore(UserSettingsProvider settings) async {
+    final confirmed = await _confirm(
+      title: '還原最新備份？',
+      message: '成功驗證備份後，裝置上的每日記錄與設定會被替換。若過程失敗，原資料會保留。',
+      confirmText: '還原',
+      destructive: true,
+    );
+    if (!confirmed) return;
+    await _run(
+      () => BackupService.instance.restore(settings),
+      successMessage: '資料已還原',
+    );
+  }
+
+  Future<void> _resetSettings(UserSettingsProvider settings) async {
+    final confirmed = await _confirm(
+      title: '重設所有設定？',
+      message: '週期、經期長度與提醒設定會回到預設值；每日記錄不會刪除。',
+      confirmText: '重設',
+    );
+    if (!confirmed) return;
+    await _run(settings.resetToDefaults, successMessage: '設定已重設');
+  }
+
+  Future<void> _clearAllRecords() async {
+    final confirmed = await _confirm(
+      title: '永久刪除裝置上的所有記錄？',
+      message: '這項操作無法復原。若你之後還原雲端備份，備份中的資料仍可回到裝置。',
+      confirmText: '永久刪除',
+      destructive: true,
+    );
+    if (!confirmed) return;
+    await _run(
+      DatabaseService.instance.clearAllData,
+      successMessage: '裝置上的每日記錄已刪除',
+    );
+  }
+
+  Future<bool> _confirm({
+    required String title,
+    required String message,
+    required String confirmText,
+    bool destructive = false,
+  }) async {
+    return await showDialog<bool>(
           context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('確認備份'),
-            content: const Text('這將會覆蓋雲端上的舊備份，確定要繼續嗎？'),
-            actions: [
+          builder: (dialogContext) => AlertDialog(
+            title: Text(title),
+            content: Text(message),
+            actions: <Widget>[
               TextButton(
-                onPressed: () => Navigator.pop(context, false),
+                onPressed: () => Navigator.pop(dialogContext, false),
                 child: const Text('取消'),
               ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('確定'),
+              FilledButton(
+                style: destructive
+                    ? FilledButton.styleFrom(
+                        backgroundColor: Theme.of(context).colorScheme.error,
+                      )
+                    : null,
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: Text(confirmText),
               ),
             ],
           ),
-        );
-
-        if (confirm != true) return;
-      }
-
-      // 顯示進度指示
-      if (context.mounted) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => const Center(
-            child: CircularProgressIndicator(),
-          ),
-        );
-      }
-
-      await BackupService.instance.backup();
-
-      // 關閉進度指示
-      if (context.mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('備份成功')),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        Navigator.pop(context); // 關閉進度指示
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('備份失敗: $e')),
-        );
-      }
-    }
+        ) ??
+        false;
   }
 
-  Future<void> _handleRestore(BuildContext context) async {
+  Future<void> _run(
+    Future<dynamic> Function() action, {
+    String? successMessage,
+  }) async {
+    if (_isBusy) return;
+    setState(() => _isBusy = true);
     try {
-      final isSignedIn = await BackupService.instance.isSignedIn();
-      if (!isSignedIn) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('請先登入 Google 帳號')),
-          );
-        }
-        return;
-      }
-
-      // 顯示確認對話框
-      if (context.mounted) {
-        final confirm = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('確認還原'),
-            content: const Text('這將會覆蓋本機上的所有資料，確定要繼續嗎？'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('確定'),
-              ),
-            ],
-          ),
-        );
-
-        if (confirm != true) return;
-      }
-
-      // 顯示進度指示
-      if (context.mounted) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => const Center(
-            child: CircularProgressIndicator(),
-          ),
-        );
-      }
-
-      await BackupService.instance.restore();
-
-      // 關閉進度指示
-      if (context.mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('還原成功')),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        Navigator.pop(context); // 關閉進度指示
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('還原失敗: $e')),
-        );
-      }
+      await action();
+      if (successMessage != null) _showMessage(successMessage);
+    } on Object catch (error) {
+      _showMessage(error.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _isBusy = false);
     }
   }
-}
 
-// 建議也添加一個確認視窗的通用組件
-class ConfirmDialog extends StatelessWidget {
-  final String title;
-  final String content;
-  final String cancelText;
-  final String confirmText;
-
-  const ConfirmDialog({
-    Key? key,
-    required this.title,
-    required this.content,
-    this.cancelText = '取消',
-    this.confirmText = '確定',
-  }) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(title),
-      content: Text(content),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: Text(cancelText),
-        ),
-        TextButton(
-          onPressed: () => Navigator.pop(context, true),
-          child: Text(confirmText),
-        ),
-      ],
-    );
-  }
-}
-
-// 建議也添加一個進度指示器組件
-class LoadingDialog extends StatelessWidget {
-  final String message;
-
-  const LoadingDialog({
-    Key? key,
-    this.message = '處理中...',
-  }) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.white,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 16),
-            Text(message),
-          ],
-        ),
-      ),
-    );
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 }

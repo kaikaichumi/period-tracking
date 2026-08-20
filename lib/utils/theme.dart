@@ -1,77 +1,77 @@
-// lib/utils/theme.dart
 import 'package:flutter/material.dart';
 
 class AppTheme {
+  static const Color _seed = Color(0xFFB33A6C);
+
   static ThemeData get lightTheme {
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: _seed,
+      brightness: Brightness.light,
+      surface: const Color(0xFFFFF8FA),
+    );
+    final roundedBorder = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(14),
+      borderSide: BorderSide(color: colorScheme.outlineVariant),
+    );
+
     return ThemeData(
-      primarySwatch: Colors.pink,
-      scaffoldBackgroundColor: Colors.grey[50],
-      
-      // AppBar 主題
+      useMaterial3: true,
+      colorScheme: colorScheme,
+      scaffoldBackgroundColor: const Color(0xFFFFF8FA),
       appBarTheme: const AppBarTheme(
-        centerTitle: true,
-        backgroundColor: Colors.pink,
-        foregroundColor: Colors.white,
+        centerTitle: false,
         elevation: 0,
+        scrolledUnderElevation: 1,
+        backgroundColor: Color(0xFFFFF8FA),
+        foregroundColor: Color(0xFF25171C),
       ),
-      
-      // Card 主題
-      cardTheme: CardTheme(
-        elevation: 2,
+      cardTheme: CardThemeData(
+        elevation: 0,
+        color: Colors.white,
+        margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.7),
+          ),
         ),
-        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
       ),
-      
-      // 輸入框主題
       inputDecorationTheme: InputDecorationTheme(
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 12,
+        filled: true,
+        fillColor: colorScheme.surfaceContainerLowest,
+        border: roundedBorder,
+        enabledBorder: roundedBorder,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
       ),
-      
-      // 按鈕主題
-      elevatedButtonTheme: ElevatedButtonThemeData(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.pink,
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(
-            horizontal: 24,
-            vertical: 12,
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
       ),
-      
-      // 開關主題
-      switchTheme: SwitchThemeData(
-        thumbColor: MaterialStateProperty.resolveWith((states) {
-          if (states.contains(MaterialState.selected)) {
-            return Colors.pink;
-          }
-          return Colors.grey;
-        }),
-        trackColor: MaterialStateProperty.resolveWith((states) {
-          if (states.contains(MaterialState.selected)) {
-            return Colors.pink[100];
-          }
-          return Colors.grey[300];
+      navigationBarTheme: NavigationBarThemeData(
+        height: 70,
+        indicatorColor: colorScheme.secondaryContainer,
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          return TextStyle(
+            fontWeight: states.contains(WidgetState.selected)
+                ? FontWeight.w700
+                : FontWeight.w500,
+          );
         }),
       ),
-      
-      // Chip 主題
       chipTheme: ChipThemeData(
-        backgroundColor: Colors.grey[200]!,
-        selectedColor: Colors.pink[100]!,
-        labelStyle: const TextStyle(fontSize: 14),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        side: BorderSide(color: colorScheme.outlineVariant),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }

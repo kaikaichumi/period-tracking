@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 // 避免與 daily_record.dart 中的枚舉衝突，移除此處的枚舉定義
 enum ContraceptionMethod {
   none,
@@ -12,7 +10,7 @@ enum ContraceptionMethod {
 }
 
 class IntimacyRecord {
-  final int? id;  // 確保這裡是 int? 類型
+  final int? id; // 確保這裡是 int? 類型
   final DateTime date;
   final int frequency;
   final ContraceptionMethod contraceptionMethod;
@@ -38,10 +36,11 @@ class IntimacyRecord {
 
   factory IntimacyRecord.fromJson(Map<String, dynamic> json) {
     return IntimacyRecord(
-      id: json['id'] != null ? json['id'] as int : null,  // 確保正確解析 int 類型
+      id: json['id'] != null ? json['id'] as int : null, // 確保正確解析 int 類型
       date: DateTime.parse(json['date'] as String),
       frequency: (json['frequency'] as num?)?.toInt() ?? 1,
-      contraceptionMethod: _parseContraceptionMethod(json['contraceptionMethod'] as String?),
+      contraceptionMethod:
+          _parseContraceptionMethod(json['contraceptionMethod'] as String?),
       notes: json['notes'] as String?,
     );
   }
@@ -91,21 +90,21 @@ class IntimacyRecord {
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;
-  
+
     return other is IntimacyRecord &&
-      other.id == id &&
-      other.date == date &&
-      other.frequency == frequency &&
-      other.contraceptionMethod == contraceptionMethod &&
-      other.notes == notes;
+        other.id == id &&
+        other.date == date &&
+        other.frequency == frequency &&
+        other.contraceptionMethod == contraceptionMethod &&
+        other.notes == notes;
   }
 
   @override
   int get hashCode {
     return id.hashCode ^
-      date.hashCode ^
-      frequency.hashCode ^
-      contraceptionMethod.hashCode ^
-      notes.hashCode;
+        date.hashCode ^
+        frequency.hashCode ^
+        contraceptionMethod.hashCode ^
+        notes.hashCode;
   }
 }
