@@ -26,7 +26,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('今天有經血'));
+    await tester.tap(find.widgetWithText(FilledButton, '標記為經期'));
     await tester.pump();
 
     expect(saved, isEmpty);

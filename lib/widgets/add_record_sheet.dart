@@ -199,20 +199,67 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
   }
 
   Widget _buildPeriodSection() {
+    final active = _hasPeriod;
     return _sectionCard(
-      child: SwitchListTile(
-        contentPadding: EdgeInsets.zero,
-        title: const Text('今天有經血'),
-        subtitle: const Text('只標記這一天，不會自動補上其他日期'),
-        value: _hasPeriod,
-        onChanged: (value) {
-          setState(() {
-            _hasPeriod = value;
-            _isDirty = true;
-          });
-        },
+      child: Row(
+        children: <Widget>[
+          Icon(
+            active ? Icons.water_drop : Icons.water_drop_outlined,
+            color: Colors.pink,
+            size: 32,
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Text(
+                  '月經狀態',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  active ? '來潮中' : '未記錄',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: active
+                        ? Colors.pink.shade700
+                        : Colors.grey.shade600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          active
+              ? OutlinedButton(
+                  onPressed: _togglePeriod,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.pink,
+                    side: const BorderSide(color: Colors.pink),
+                  ),
+                  child: const Text('結束經期'),
+                )
+              : FilledButton(
+                  onPressed: _togglePeriod,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.pink,
+                  ),
+                  child: const Text('標記為經期'),
+                ),
+        ],
       ),
     );
+  }
+
+  void _togglePeriod() {
+    setState(() {
+      _hasPeriod = !_hasPeriod;
+      _isDirty = true;
+    });
   }
 
   Widget _buildBleedingLevelSection() {
