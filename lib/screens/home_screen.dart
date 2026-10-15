@@ -7,6 +7,7 @@ import '../models/daily_record.dart';
 import '../providers/user_settings_provider.dart';
 import '../services/database_service.dart';
 import '../services/prediction_service.dart';
+import '../utils/date_utils.dart' as date_utils;
 import '../widgets/add_record_sheet.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -22,9 +23,8 @@ class _HomeScreenState extends State<HomeScreen> {
   DateTime _selectedDay = _dateOnly(DateTime.now());
   Map<DateTime, DailyRecord> _events = <DateTime, DailyRecord>{};
   Set<DateTime> _predictedPeriodDays = <DateTime>{};
-  List<DateTime> _predictedStarts = <DateTime>[];
-  DateTime? _lastPeriodStart;
-  int? _predictionConfidence;
+  PeriodForecast? _forecast;
+  int? _predictionRangeDays;
   bool _isLoading = true;
   int _loadToken = 0;
   bool _rangeMode = false;
@@ -66,29 +66,21 @@ class _HomeScreenState extends State<HomeScreen> {
     final records = await DatabaseService.instance.getAllDailyRecords();
     if (!mounted || token != _loadToken) return;
     final settings = context.read<UserSettingsProvider>().settings;
-    final periodDetails = PredictionService.findPeriodDetails(records);
-    final predictions = PredictionService.predictNextPeriods(records, settings);
-    final averagePeriodLength = periodDetails.isEmpty
-        ? settings.periodLength
-        : (periodDetails.map((period) => period.$2).reduce((a, b) => a + b) /
-                periodDetails.length)
-            .round();
-    final predictionDays = <DateTime>{};
-    for (final start in predictions) {
-      for (var offset = 0; offset < averagePeriodLength; offset++) {
-        predictionDays.add(_dateOnly(start.add(Duration(days: offset))));
-      }
-    }
+    final forecast = PredictionService.forecast(records, settings);
+    final predictionDays = <DateTime>{
+      if (forecast != null)
+        for (final start in forecast.upcomingStarts)
+          for (var offset = 0; offset < forecast.periodLength; offset++)
+            date_utils.DateUtils.addDays(start, offset),
+    };
 
     setState(() {
       _events = <DateTime, DailyRecord>{
         for (final record in records) _dateOnly(record.date): record,
       };
       _predictedPeriodDays = predictionDays;
-      _predictedStarts = predictions;
-      _lastPeriodStart = periodDetails.isEmpty ? null : periodDetails.last.$1;
-      _predictionConfidence =
-          PredictionService.getPredictionConfidence(records);
+      _forecast = forecast;
+      _predictionRangeDays = PredictionService.predictionRangeDays(records);
       _isLoading = false;
     });
   }
@@ -154,7 +146,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildStatusCard() {
     final colors = Theme.of(context).colorScheme;
-    if (_lastPeriodStart == null) {
+    final forecast = _forecast;
+    if (forecast == null) {
       return Card(
         color: colors.primaryContainer,
         child: Padding(
@@ -186,7 +179,8 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    final next = _predictedStarts.isEmpty ? null : _predictedStarts.first;
+    final formatter = DateFormat('yyyy/MM/dd');
+    final next = forecast.nextStart;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(18),
@@ -212,12 +206,17 @@ class _HomeScreenState extends State<HomeScreen> {
               children: <Widget>[
                 _StatusValue(
                   label: '最近一次開始',
-                  value: DateFormat('yyyy/MM/dd').format(_lastPeriodStart!),
+                  value: formatter.format(forecast.lastStart),
                 ),
-                if (next != null)
+                if (forecast.isLate)
+                  _StatusValue(
+                    label: '比預估晚了',
+                    value: '${forecast.daysLate} 天',
+                  )
+                else if (next != null)
                   _StatusValue(
                     label: '下次預估',
-                    value: DateFormat('yyyy/MM/dd').format(next),
+                    value: formatter.format(next),
                   ),
               ],
             ),
@@ -229,9 +228,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    _predictionConfidence == null
-                        ? '目前依你的週期設定估算；至少記錄 3 次經期開始日後，才會顯示可信度。'
-                        : '依過去週期規律性估算，預測可信度 ${_predictionConfidence!}%。',
+                    _forecastNote(forecast),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
@@ -241,6 +238,25 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+  }
+
+  String _forecastNote(PeriodForecast forecast) {
+    if (forecast.isLate) {
+      return '原本預估 ${DateFormat('M/d').format(forecast.expectedStart)} 開始。'
+          '如果經期已經來了，記得補上記錄，預估才會更新。';
+    }
+    if (forecast.isStale) {
+      return '已超過一個週期沒有新的經期記錄，以上只是依舊資料推算；補上最近的經期後會更準。';
+    }
+    if (forecast.cyclesUsed == 0) {
+      return '目前依你設定的週期長度（${forecast.cycleLength} 天）估算；'
+          '記錄兩次以上經期後，會改用你的實際週期。';
+    }
+    final range = _predictionRangeDays;
+    if (range == null) {
+      return '依你記錄的 1 個週期（${forecast.cycleLength} 天）估算，多記錄幾次會更準。';
+    }
+    return '依最近 ${forecast.cyclesUsed} 個週期估算，實際日期通常在預估前後 $range 天內。';
   }
 
   Widget _buildCalendar() {
@@ -257,9 +273,11 @@ class _HomeScreenState extends State<HomeScreen> {
         CalendarFormat.twoWeeks: '兩週',
         CalendarFormat.week: '週',
       },
+      // `disabled` (not `toggledOff`) so a long press outside range mode
+      // can't start a selection and leave a stray range highlight.
       rangeSelectionMode: _rangeMode
           ? RangeSelectionMode.toggledOn
-          : RangeSelectionMode.toggledOff,
+          : RangeSelectionMode.disabled,
       rangeStartDay: _rangeStart,
       rangeEndDay: _rangeEnd,
       onDaySelected: _rangeMode
@@ -441,12 +459,20 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _pickFirstPeriodDate() async {
-    final now = DateTime.now();
+    final today = _dateOnly(DateTime.now());
+    final firstDate = DateTime(today.year - 2);
+    // The calendar selection can be a future day or older than the picker
+    // allows; the picker asserts that the initial date is within range.
+    final initialDate = _selectedDay.isAfter(today)
+        ? today
+        : _selectedDay.isBefore(firstDate)
+            ? firstDate
+            : _selectedDay;
     final picked = await showDatePicker(
       context: context,
-      initialDate: _selectedDay,
-      firstDate: DateTime(now.year - 2),
-      lastDate: now,
+      initialDate: initialDate,
+      firstDate: firstDate,
+      lastDate: today,
       helpText: '選擇最近一次有經血的日期',
     );
     if (picked == null || !mounted) return;
@@ -466,6 +492,9 @@ class _HomeScreenState extends State<HomeScreen> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      // Dragging the sheet down closes it without going through PopScope,
+      // which would throw away unsaved edits without asking.
+      enableDrag: false,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => Padding(
         padding: EdgeInsets.only(
@@ -518,7 +547,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _confirmAddPeriodRange(DateTime start, DateTime end) async {
     final normalizedStart = _dateOnly(start);
     final normalizedEnd = _dateOnly(end);
-    final dayCount = normalizedEnd.difference(normalizedStart).inDays + 1;
+    final dayCount =
+        date_utils.DateUtils.daysBetween(normalizedStart, normalizedEnd) + 1;
     final formatter = DateFormat('yyyy/MM/dd');
 
     final confirmed = await showDialog<bool>(
@@ -544,6 +574,7 @@ class _HomeScreenState extends State<HomeScreen> {
       },
     );
 
+    if (!mounted) return;
     if (confirmed != true) {
       setState(() {
         _rangeMode = false;
@@ -553,24 +584,35 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    for (int i = 0; i < dayCount; i++) {
-      final day = normalizedStart.add(Duration(days: i));
+    final toSave = <DailyRecord>[];
+    for (var i = 0; i < dayCount; i++) {
+      final day = date_utils.DateUtils.addDays(normalizedStart, i);
       final existing = _events[day];
-      final DailyRecord toSave;
       if (existing != null) {
-        toSave = existing.copyWith(
-          hasPeriod: true,
-          bleedingLevel: existing.bleedingLevel ?? BleedingLevel.medium,
+        toSave.add(
+          existing.copyWith(
+            hasPeriod: true,
+            bleedingLevel: existing.bleedingLevel ?? BleedingLevel.medium,
+          ),
         );
       } else {
-        toSave = DailyRecord(
-          date: day,
-          hasPeriod: true,
-          bleedingLevel: BleedingLevel.medium,
+        toSave.add(
+          DailyRecord(
+            date: day,
+            hasPeriod: true,
+            bleedingLevel: BleedingLevel.medium,
+          ),
         );
       }
-      await DatabaseService.instance.saveDailyRecord(toSave);
     }
+
+    Object? saveError;
+    try {
+      await DatabaseService.instance.saveDailyRecords(toSave);
+    } on Object catch (error) {
+      saveError = error;
+    }
+    if (!mounted) return;
 
     setState(() {
       _rangeMode = false;
@@ -581,7 +623,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已新增 $dayCount 天經期記錄')),
+        SnackBar(
+          content: Text(
+            saveError == null ? '已新增 $dayCount 天經期記錄' : '新增失敗：$saveError',
+          ),
+        ),
       );
     }
   }

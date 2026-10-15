@@ -1,11 +1,25 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
+
+/// A reminder before an estimated period start, in the device's local time.
+class PlannedReminder {
+  const PlannedReminder({
+    required this.id,
+    required this.daysBefore,
+    required this.time,
+  });
+
+  final int id;
+  final int daysBefore;
+  final DateTime time;
+}
 
 class NotificationService {
   static final NotificationService instance = NotificationService._internal();
+
+  static const Color _accentColor = Color(0xFFB33A6C);
 
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
@@ -23,12 +37,10 @@ class NotificationService {
     if (_isInitialized || !isSupported) return;
 
     try {
-      tz.initializeTimeZones();
-      // LunaCare currently ships for users in Taiwan.
-      tz.setLocalLocation(tz.getLocation('Asia/Taipei'));
-
       const settings = InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        // Status bar icons must be single-colour; the launcher icon would show
+        // up as a blank square.
+        android: AndroidInitializationSettings('ic_stat_notification'),
         iOS: DarwinInitializationSettings(
           requestAlertPermission: false,
           requestBadgePermission: false,
@@ -102,34 +114,53 @@ class NotificationService {
     return true;
   }
 
-  Future<void> schedulePeriodReminders(
+  /// Works out when each reminder should fire, skipping times already past.
+  static List<PlannedReminder> planPeriodReminders(
+    DateTime nextPeriod,
+    Set<int> reminderDays,
+    TimeOfDay reminderTime, {
+    DateTime? now,
+  }) {
+    final currentTime = now ?? DateTime.now();
+    final reminders = <PlannedReminder>[
+      for (final days in reminderDays)
+        PlannedReminder(
+          id: 100 + days,
+          daysBefore: days,
+          time: DateTime(
+            nextPeriod.year,
+            nextPeriod.month,
+            nextPeriod.day - days,
+            reminderTime.hour,
+            reminderTime.minute,
+          ),
+        ),
+    ]..removeWhere((reminder) => !reminder.time.isAfter(currentTime));
+    return reminders..sort((a, b) => a.time.compareTo(b.time));
+  }
+
+  /// Replaces every scheduled reminder and returns the new ones, earliest
+  /// first.
+  Future<List<PlannedReminder>> schedulePeriodReminders(
     DateTime nextPeriod,
     Set<int> reminderDays,
     TimeOfDay reminderTime,
   ) async {
-    if (!isSupported) return;
+    if (!isSupported) return const <PlannedReminder>[];
     await _ensureInitialized();
-    if (!_isInitialized) return;
+    if (!_isInitialized) throw StateError('通知服務無法初始化');
 
-    await cancelAll();
-    final now = tz.TZDateTime.now(tz.local);
-    for (final days in reminderDays) {
-      final reminderDate = nextPeriod.subtract(Duration(days: days));
-      final scheduledAt = tz.TZDateTime(
-        tz.local,
-        reminderDate.year,
-        reminderDate.month,
-        reminderDate.day,
-        reminderTime.hour,
-        reminderTime.minute,
-      );
-      if (!scheduledAt.isAfter(now)) continue;
-
+    await _notifications.cancelAll();
+    final reminders =
+        planPeriodReminders(nextPeriod, reminderDays, reminderTime);
+    for (final reminder in reminders) {
       await _notifications.zonedSchedule(
-        100 + days,
+        reminder.id,
         '經期提醒',
-        _messageForDays(days),
-        scheduledAt,
+        _messageForDays(reminder.daysBefore),
+        // A UTC instant taken from the device's local time keeps reminders on
+        // the user's own time zone without bundling a time zone database.
+        tz.TZDateTime.from(reminder.time, tz.UTC),
         const NotificationDetails(
           android: AndroidNotificationDetails(
             'period_channel',
@@ -137,6 +168,7 @@ class NotificationService {
             channelDescription: '依照你的週期設定提醒預估經期日期',
             importance: Importance.high,
             priority: Priority.high,
+            color: _accentColor,
           ),
           iOS: DarwinNotificationDetails(),
           macOS: DarwinNotificationDetails(),
@@ -144,22 +176,16 @@ class NotificationService {
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-        payload: 'period_reminder_$days',
+        payload: 'period_reminder_${reminder.daysBefore}',
       );
     }
+    return reminders;
   }
 
   Future<void> cancelAll() async {
     if (!isSupported) return;
     await _ensureInitialized();
     if (_isInitialized) await _notifications.cancelAll();
-  }
-
-  Future<List<PendingNotificationRequest>> getPendingNotifications() async {
-    if (!isSupported) return <PendingNotificationRequest>[];
-    await _ensureInitialized();
-    if (!_isInitialized) return <PendingNotificationRequest>[];
-    return _notifications.pendingNotificationRequests();
   }
 
   Future<void> showTestNotification() async {
@@ -177,12 +203,16 @@ class NotificationService {
           '測試通知',
           importance: Importance.high,
           priority: Priority.high,
+          color: _accentColor,
         ),
         iOS: DarwinNotificationDetails(),
         macOS: DarwinNotificationDetails(),
       ),
     );
   }
+
+  @visibleForTesting
+  void resetForTesting() => _isInitialized = false;
 
   Future<void> _ensureInitialized() async {
     if (!_isInitialized) await init();

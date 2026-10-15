@@ -53,3 +53,7 @@ key.properties
 # Other sensitive files
 local.properties
 .gstack/
+
+# Claude Code local worktrees and settings
+.claude/worktrees/
+.claude/settings.local.json

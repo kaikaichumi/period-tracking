@@ -1,4 +1,4 @@
-// lib/utils/date_utils.dart (新增)
+// lib/utils/date_utils.dart
 import 'package:intl/intl.dart';
 
 class DateUtils {
@@ -13,9 +13,18 @@ class DateUtils {
     return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 
+  static DateTime dateOnly(DateTime date) =>
+      DateTime(date.year, date.month, date.day);
+
+  /// Moves by calendar days, so a 23- or 25-hour daylight-saving day never
+  /// shifts the result to the wrong date.
+  static DateTime addDays(DateTime date, int days) =>
+      DateTime(date.year, date.month, date.day + days);
+
+  /// Calendar days from [from] to [to], ignoring the time of day.
   static int daysBetween(DateTime from, DateTime to) {
-    from = DateTime(from.year, from.month, from.day);
-    to = DateTime(to.year, to.month, to.day);
-    return (to.difference(from).inHours / 24).round();
+    return DateTime.utc(to.year, to.month, to.day)
+        .difference(DateTime.utc(from.year, from.month, from.day))
+        .inDays;
   }
 }

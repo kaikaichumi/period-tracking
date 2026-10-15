@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/user_settings_provider.dart';
@@ -83,6 +84,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   if (settings.notificationsEnabled &&
                       NotificationService.instance.isSupported) ...<Widget>[
+                    _buildReminderStatus(settings),
                     ListTile(
                       title: const Text('提醒時間'),
                       trailing: Text(settings.reminderTime.format(context)),
@@ -148,7 +150,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ? null
                                 : () => _restore(settings),
                             icon: const Icon(Icons.restore),
-                            label: const Text('還原最新'),
+                            label: const Text('從備份還原'),
                           ),
                         ),
                       ],
@@ -173,7 +175,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const ListTile(
                     title: Text('資料儲存方式'),
                     subtitle: Text(
-                      '每日記錄預設只保存在這台裝置。只有你主動建立備份時，才會上傳到 Google Drive 的 App 私人資料夾。',
+                      '每日記錄只保存在這台裝置，不會隨系統自動備份上傳。只有你主動建立備份時，才會上傳到 Google Drive 的 App 私人資料夾；換手機前請先建立備份。',
                     ),
                   ),
                   ListTile(
@@ -259,9 +261,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final value = await _showNumberDialog(
       title: '平均經期長度',
       initialValue: settings.periodLength,
-      min: 1,
-      max: 10,
-      helperText: '請輸入 1–10 天',
+      min: AppConstants.minPeriodLength,
+      max: AppConstants.maxPeriodLength,
+      helperText:
+          '請輸入 ${AppConstants.minPeriodLength}–${AppConstants.maxPeriodLength} 天',
     );
     if (value != null) await _run(() => settings.updatePeriodLength(value));
   }
@@ -441,16 +444,102 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _restore(UserSettingsProvider settings) async {
+    var backups = <BackupInfo>[];
+    var listed = false;
+    await _run(() async {
+      backups = await BackupService.instance.listBackups();
+      listed = true;
+    });
+    if (!mounted || !listed) return;
+    if (backups.isEmpty) {
+      _showMessage('Google Drive 中還沒有任何備份');
+      return;
+    }
+
+    final selected = await _pickBackup(backups);
+    if (selected == null || !mounted) return;
     final confirmed = await _confirm(
-      title: '還原最新備份？',
-      message: '成功驗證備份後，裝置上的每日記錄與設定會被替換。若過程失敗，原資料會保留。',
+      title: '還原這份備份？',
+      message: '${_backupTitle(selected)}（${_backupRecordText(selected)}）\n\n'
+          '成功驗證備份後，裝置上的每日記錄與設定會被替換。若過程失敗，原資料會保留。',
       confirmText: '還原',
       destructive: true,
     );
     if (!confirmed) return;
     await _run(
-      () => BackupService.instance.restore(settings),
+      () => BackupService.instance.restore(settings, selected),
       successMessage: '資料已還原',
+    );
+  }
+
+  Future<BackupInfo?> _pickBackup(List<BackupInfo> backups) {
+    return showDialog<BackupInfo>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('選擇要還原的備份'),
+        contentPadding: const EdgeInsets.fromLTRB(0, 16, 0, 0),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView(
+            shrinkWrap: true,
+            children: <Widget>[
+              for (final backup in backups)
+                ListTile(
+                  leading: const Icon(Icons.history),
+                  title: Text(_backupTitle(backup)),
+                  subtitle: Text(_backupRecordText(backup)),
+                  // Empty backups can't be restored; see BackupService.
+                  enabled: backup.recordCount != 0,
+                  onTap: () => Navigator.pop(dialogContext, backup),
+                ),
+            ],
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _backupTitle(BackupInfo backup) {
+    final createdAt = backup.createdAt;
+    return createdAt == null
+        ? '日期不明的備份'
+        : DateFormat('yyyy/MM/dd HH:mm').format(createdAt);
+  }
+
+  String _backupRecordText(BackupInfo backup) {
+    final count = backup.recordCount;
+    if (count == null) return '筆數未知（舊版備份）';
+    if (count == 0) return '沒有記錄';
+    return '$count 筆記錄';
+  }
+
+  Widget _buildReminderStatus(UserSettingsProvider settings) {
+    final error = settings.reminderError;
+    final next = settings.nextReminderAt;
+    if (error != null) {
+      return ListTile(
+        leading: Icon(
+          Icons.error_outline,
+          color: Theme.of(context).colorScheme.error,
+        ),
+        title: const Text('提醒排程失敗'),
+        subtitle: Text(error),
+      );
+    }
+    return ListTile(
+      leading: const Icon(Icons.event_available_outlined),
+      title: const Text('下一次提醒'),
+      subtitle: Text(
+        next == null
+            ? '目前沒有可安排的提醒（還沒有經期記錄、經期比預估晚，或選擇的提醒日都已過）'
+            : DateFormat('yyyy/MM/dd HH:mm').format(next),
+      ),
     );
   }
 

@@ -1,4 +1,6 @@
 // lib/models/daily_record.dart
+import '../utils/constants.dart';
+
 enum BleedingLevel {
   none,
   spotting,
@@ -45,17 +47,8 @@ class DailyRecord {
     this.intimacyNotes,
     this.isPeriodEndDay = false, // 預設為 false
   }) : symptoms = symptoms ??
-            {
-              '情緒變化': false,
-              '乳房脹痛': false,
-              '腰痛': false,
-              '頭痛': false,
-              '疲勞': false,
-              '痘痘': false,
-              '噁心': false,
-              '食慾改變': false,
-              '失眠': false,
-              '腹脹': false,
+            <String, bool>{
+              for (final symptom in AppConstants.symptoms) symptom: false,
             };
 
   Map<String, dynamic> toJson() {

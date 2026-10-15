@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/daily_record.dart';
 import '../services/database_service.dart';
+import '../utils/constants.dart';
 
 class AddRecordSheet extends StatefulWidget {
   const AddRecordSheet({
@@ -31,18 +32,11 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
 
   bool _hasPeriod = false;
   BleedingLevel _bleedingLevel = BleedingLevel.medium;
-  int _painLevel = 0;
+  /// Null until the user rates the pain, so an untouched slider isn't saved
+  /// as "no pain" and doesn't drag down the average.
+  int? _painLevel;
   final Map<String, bool> _symptoms = <String, bool>{
-    '情緒變化': false,
-    '乳房脹痛': false,
-    '腰痛': false,
-    '頭痛': false,
-    '疲勞': false,
-    '痘痘': false,
-    '噁心': false,
-    '食慾改變': false,
-    '失眠': false,
-    '腹脹': false,
+    for (final symptom in AppConstants.symptoms) symptom: false,
   };
   bool _hasIntimacy = false;
   int _intimacyFrequency = 1;
@@ -67,7 +61,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
       _loadedRecord = record;
       _hasPeriod = record.hasPeriod;
       _bleedingLevel = record.bleedingLevel ?? BleedingLevel.medium;
-      _painLevel = record.painLevel ?? 0;
+      _painLevel = record.painLevel;
       _symptoms.addAll(record.symptoms);
       _notesController.text = record.notes ?? '';
       _hasIntimacy = record.hasIntimacy;
@@ -105,15 +99,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
             height: MediaQuery.sizeOf(context).height * 0.92,
             child: Column(
               children: <Widget>[
-                const SizedBox(height: 10),
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.outlineVariant,
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                ),
+                const SizedBox(height: 8),
                 _buildHeader(),
                 const Divider(height: 1),
                 Expanded(
@@ -222,7 +208,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  active ? '來潮中' : '未記錄',
+                  active ? '這天已標記為經期' : '這天未標記為經期',
                   style: TextStyle(
                     fontSize: 14,
                     color: active
@@ -241,7 +227,8 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                     foregroundColor: Colors.pink,
                     side: const BorderSide(color: Colors.pink),
                   ),
-                  child: const Text('結束經期'),
+                  // Only this day changes; other period days stay as recorded.
+                  child: const Text('取消經期標記'),
                 )
               : FilledButton(
                   onPressed: _togglePeriod,
@@ -298,15 +285,23 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
           Row(
             children: <Widget>[
               const Expanded(child: _SectionTitle('疼痛程度')),
-              Text('$_painLevel / 10'),
+              Text(_painLevel == null ? '未評分' : '$_painLevel / 10'),
+              if (_painLevel != null)
+                TextButton(
+                  onPressed: () => setState(() {
+                    _painLevel = null;
+                    _isDirty = true;
+                  }),
+                  child: const Text('清除'),
+                ),
             ],
           ),
           Slider(
-            value: _painLevel.toDouble(),
+            value: (_painLevel ?? 0).toDouble(),
             min: 0,
             max: 10,
             divisions: 10,
-            label: _painLevel.toString(),
+            label: '${_painLevel ?? 0}',
             onChanged: (value) {
               setState(() {
                 _painLevel = value.round();
@@ -544,7 +539,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('刪除這天的記錄？'),
-        content: const Text('刪除後無法復原。其他日期不會受到影響。'),
+        content: const Text('只會刪除這一天的記錄，其他日期不受影響。刪除後可在畫面下方按「復原」救回。'),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),

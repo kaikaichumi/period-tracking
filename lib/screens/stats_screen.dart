@@ -17,9 +17,9 @@ class StatsScreen extends StatefulWidget {
 class _StatsScreenState extends State<StatsScreen> {
   bool _isLoading = true;
   Map<String, dynamic> _stats = <String, dynamic>{};
-  List<DateTime> _predictions = <DateTime>[];
+  PeriodForecast? _forecast;
   List<DailyRecord> _records = <DailyRecord>[];
-  int? _predictionConfidence;
+  int? _predictionRangeDays;
   int _loadToken = 0;
   UserSettingsProvider? _settingsProvider;
 
@@ -58,9 +58,8 @@ class _StatsScreenState extends State<StatsScreen> {
     setState(() {
       _records = records;
       _stats = PredictionService.getStatistics(records, settings);
-      _predictions = PredictionService.predictNextPeriods(records, settings);
-      _predictionConfidence =
-          PredictionService.getPredictionConfidence(records);
+      _forecast = PredictionService.forecast(records, settings);
+      _predictionRangeDays = PredictionService.predictionRangeDays(records);
       _isLoading = false;
     });
   }
@@ -127,29 +126,49 @@ class _StatsScreenState extends State<StatsScreen> {
       title: '週期概況',
       children: <Widget>[
         _statRow(
-          label: '平均週期長度',
-          value:
-              '${_stats['averageCycleLength']} 天${usingSettings ? '（設定值）' : ''}',
+          label: '週期長度',
+          value: '${_stats['cycleLength']} 天${usingSettings ? '（設定值）' : ''}',
         ),
         _statRow(
-          label: '平均經期長度',
-          value: '${_stats['averagePeriodLength']} 天',
+          label: '經期長度',
+          value: '${_stats['periodLength']} 天',
         ),
         _statRow(
           label: '週期規律性',
           value: regularity == null ? '資料不足' : '${(regularity * 100).round()}%',
         ),
-        if (regularity == null) _infoText('至少需要 3 次經期開始日，才能比較週期間隔與規律性。'),
+        _infoText(
+          usingSettings
+              ? '至少需要 2 次經期開始日才能算出你的實際週期，3 次以上才能比較規律性。'
+              : '取最近 ${PredictionService.recentCycleCount} 次的中位數，偶爾漏記一次也不會把數字拉偏。',
+        ),
+        if (!usingSettings && regularity == null)
+          _infoText('至少需要 3 次經期開始日，才能比較週期間隔與規律性。'),
       ],
     );
   }
 
   Widget _buildPredictionsCard() {
-    if (_predictions.isEmpty) {
+    final forecast = _forecast;
+    if (forecast == null) {
       return _statsCard(
         title: '經期預估',
         children: <Widget>[
           const Text('尚未記錄經期開始日，因此目前無法預估。'),
+        ],
+      );
+    }
+
+    if (forecast.isLate) {
+      return _statsCard(
+        title: '經期預估',
+        children: <Widget>[
+          _statRow(label: '比預估晚了', value: '${forecast.daysLate} 天'),
+          _statRow(
+            label: '原本預估',
+            value: date_utils.DateUtils.formatDate(forecast.expectedStart),
+          ),
+          _infoText('記錄這次經期的開始日後，就會重新預估接下來的日期。'),
         ],
       );
     }
@@ -159,13 +178,13 @@ class _StatsScreenState extends State<StatsScreen> {
       trailing: Chip(
         avatar: const Icon(Icons.query_stats, size: 18),
         label: Text(
-          _predictionConfidence == null
-              ? '可信度：資料不足'
-              : '可信度：$_predictionConfidence%',
+          _predictionRangeDays == null
+              ? '誤差：資料不足'
+              : '誤差 ±$_predictionRangeDays 天',
         ),
       ),
       children: <Widget>[
-        ..._predictions.asMap().entries.map((entry) {
+        ...forecast.upcomingStarts.asMap().entries.map((entry) {
           return ListTile(
             contentPadding: EdgeInsets.zero,
             leading: CircleAvatar(
@@ -176,9 +195,11 @@ class _StatsScreenState extends State<StatsScreen> {
           );
         }),
         _infoText(
-          _predictionConfidence == null
-              ? '目前以設定的週期長度估算，僅供安排與觀察，不代表醫療判斷。'
-              : '預估會隨你新增或修正經期記錄而更新。',
+          forecast.isStale
+              ? '已超過一個週期沒有新的經期記錄，以上只是依舊資料推算，僅供參考。'
+              : forecast.cyclesUsed == 0
+                  ? '目前以設定的週期長度估算，僅供安排與觀察，不代表醫療判斷。'
+                  : '預估會隨你新增或修正經期記錄而更新。',
         ),
       ],
     );

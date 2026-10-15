@@ -1,13 +1,16 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.techcare.lunacare">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
+    <!-- Records must not leave the device unless the user makes a backup, so
+         Android's automatic cloud backup is off. -->
     <application
         android:name="${applicationName}"
         android:label="LunaCare"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/user_settings.dart';
 import '../services/database_service.dart';
 import '../services/notification_service.dart';
+import '../services/prediction_service.dart';
 import '../utils/constants.dart';
 
 class UserSettingsProvider extends ChangeNotifier {
@@ -12,18 +14,40 @@ class UserSettingsProvider extends ChangeNotifier {
   bool _notificationsEnabled = false;
   TimeOfDay _reminderTime = const TimeOfDay(hour: 9, minute: 0);
   Set<int> _reminderDays = <int>{1};
-  bool _isLoading = true;
+
+  late final Future<void> _loaded;
+  Future<void>? _reminderSync;
+  bool _reminderSyncRequested = false;
+  bool _mayHaveScheduledReminders = false;
+  DateTime? _nextReminderAt;
+  String? _reminderError;
+  bool _isDisposed = false;
 
   UserSettingsProvider() {
-    _loadSettings();
+    // The next estimated start depends on the records, so reminders are
+    // planned again whenever a record changes.
+    DatabaseService.instance.revision.addListener(_syncReminders);
+    _loaded = _loadSettings();
   }
 
-  bool get isLoading => _isLoading;
+  /// Completes once saved settings are loaded and reminders are planned.
+  Future<void> get ready => _loaded;
+
+  /// Completes when the reminder sync in progress, if any, has finished.
+  @visibleForTesting
+  Future<void> get reminderSyncDone => _reminderSync ?? Future<void>.value();
+
   int get cycleLength => _cycleLength;
   int get periodLength => _periodLength;
   bool get notificationsEnabled => _notificationsEnabled;
   TimeOfDay get reminderTime => _reminderTime;
   Set<int> get reminderDays => Set<int>.unmodifiable(_reminderDays);
+
+  /// When the earliest scheduled reminder fires, if any.
+  DateTime? get nextReminderAt => _nextReminderAt;
+
+  /// Why reminders couldn't be scheduled, shown in settings.
+  String? get reminderError => _reminderError;
 
   UserSettings get settings => UserSettings(
         cycleLength: _cycleLength,
@@ -39,29 +63,25 @@ class UserSettingsProvider extends ChangeNotifier {
       _cycleLength = _validCycleLength(
         prefs.getInt(AppConstants.prefsCycleLength),
       );
-      _periodLength = _validPeriodLength(prefs.getInt('period_length'));
-      _notificationsEnabled = prefs.getBool('notifications_enabled') ?? false;
+      _periodLength = _validPeriodLength(
+        prefs.getInt(AppConstants.prefsPeriodLength),
+      );
+      _notificationsEnabled =
+          prefs.getBool(AppConstants.prefsNotificationsEnabled) ?? false;
       _reminderTime = _parseTime(
-        prefs.getString('reminder_time'),
+        prefs.getString(AppConstants.prefsReminderTime),
         fallback: const TimeOfDay(hour: 9, minute: 0),
       );
       _reminderDays = _parseReminderDays(
-        prefs.getStringList('reminder_days'),
+        prefs.getStringList(AppConstants.prefsReminderDays),
       );
     } on Object catch (error) {
       debugPrint('讀取設定失敗，已使用預設值: $error');
     } finally {
-      _isLoading = false;
-      notifyListeners();
+      _notify();
     }
 
-    if (_notificationsEnabled) {
-      try {
-        await _scheduleNotifications();
-      } on Object catch (error) {
-        debugPrint('安排提醒失敗: $error');
-      }
-    }
+    await _syncReminders();
   }
 
   Future<void> updateCycleLength(int newLength) async {
@@ -74,7 +94,8 @@ class UserSettingsProvider extends ChangeNotifier {
   }
 
   Future<void> updatePeriodLength(int newLength) async {
-    if (newLength < 1 || newLength > 10) {
+    if (newLength < AppConstants.minPeriodLength ||
+        newLength > AppConstants.maxPeriodLength) {
       throw ArgumentError.value(newLength, 'newLength', '經期長度超出範圍');
     }
     _periodLength = newLength;
@@ -83,7 +104,6 @@ class UserSettingsProvider extends ChangeNotifier {
 
   Future<void> updateNotificationsEnabled(bool enabled) async {
     _notificationsEnabled = enabled;
-    if (!enabled) await NotificationService.instance.cancelAll();
     await _saveSettings();
   }
 
@@ -93,7 +113,7 @@ class UserSettingsProvider extends ChangeNotifier {
   }
 
   Future<void> updateReminderDays(Set<int> days) async {
-    if (!days.every(_allowedReminderDays.contains)) {
+    if (!days.every(AppConstants.reminderDayOptions.contains)) {
       throw ArgumentError.value(days, 'days', '包含不支援的提醒日');
     }
     _reminderDays = Set<int>.from(days);
@@ -119,8 +139,8 @@ class UserSettingsProvider extends ChangeNotifier {
         cycleLength < AppConstants.minCycleLength ||
         cycleLength > AppConstants.maxCycleLength ||
         periodLength is! int ||
-        periodLength < 1 ||
-        periodLength > 10 ||
+        periodLength < AppConstants.minPeriodLength ||
+        periodLength > AppConstants.maxPeriodLength ||
         notificationsEnabled is! bool ||
         reminderTime is! String ||
         reminderDays is! List) {
@@ -131,7 +151,7 @@ class UserSettingsProvider extends ChangeNotifier {
       if (value is! int) throw const FormatException('提醒日期格式不正確');
       return value;
     }).toSet();
-    if (!parsedDays.every(_allowedReminderDays.contains)) {
+    if (!parsedDays.every(AppConstants.reminderDayOptions.contains)) {
       throw const FormatException('備份中包含不支援的提醒日期');
     }
 
@@ -150,53 +170,112 @@ class UserSettingsProvider extends ChangeNotifier {
     _notificationsEnabled = false;
     _reminderTime = const TimeOfDay(hour: 9, minute: 0);
     _reminderDays = <int>{1};
-    await NotificationService.instance.cancelAll();
     await _saveSettings();
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    DatabaseService.instance.revision.removeListener(_syncReminders);
+    super.dispose();
   }
 
   Future<void> _saveSettings() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(AppConstants.prefsCycleLength, _cycleLength);
-    await prefs.setInt('period_length', _periodLength);
-    await prefs.setBool('notifications_enabled', _notificationsEnabled);
+    await prefs.setInt(AppConstants.prefsPeriodLength, _periodLength);
+    await prefs.setBool(
+      AppConstants.prefsNotificationsEnabled,
+      _notificationsEnabled,
+    );
     await prefs.setString(
-      'reminder_time',
+      AppConstants.prefsReminderTime,
       '${_reminderTime.hour}:${_reminderTime.minute}',
     );
     await prefs.setStringList(
-      'reminder_days',
+      AppConstants.prefsReminderDays,
       _reminderDays.map((day) => day.toString()).toList(),
     );
-    notifyListeners();
-    if (_notificationsEnabled) {
-      try {
-        await _scheduleNotifications();
-      } on Object catch (error) {
-        debugPrint('安排提醒失敗: $error');
+    _notify();
+    await _syncReminders();
+  }
+
+  /// Plans reminders again from the latest records and settings. A request
+  /// that arrives while a sync is running is folded into one more pass, and
+  /// the returned future completes after that pass.
+  Future<void> _syncReminders() {
+    if (_reminderSync != null) {
+      _reminderSyncRequested = true;
+      return _reminderSync!;
+    }
+    return _reminderSync = _runReminderSync();
+  }
+
+  Future<void> _runReminderSync() async {
+    try {
+      do {
+        _reminderSyncRequested = false;
+        await _applyReminders();
+      } while (_reminderSyncRequested && !_isDisposed);
+    } finally {
+      _reminderSync = null;
+    }
+  }
+
+  Future<void> _applyReminders() async {
+    final notifications = NotificationService.instance;
+    if (!notifications.isSupported) return;
+
+    try {
+      DateTime? nextStart;
+      if (_notificationsEnabled) {
+        final records = await DatabaseService.instance.getAllDailyRecords();
+        nextStart = PredictionService.forecast(records, settings)?.nextStart;
       }
+
+      if (nextStart == null) {
+        if (_mayHaveScheduledReminders) {
+          await notifications.cancelAll();
+          _mayHaveScheduledReminders = false;
+        }
+        _setReminderState(nextReminderAt: null, error: null);
+        return;
+      }
+
+      _mayHaveScheduledReminders = true;
+      final scheduled = await notifications.schedulePeriodReminders(
+        nextStart,
+        _reminderDays,
+        _reminderTime,
+      );
+      _setReminderState(
+        nextReminderAt: scheduled.isEmpty ? null : scheduled.first.time,
+        error: null,
+      );
+    } on Object catch (error) {
+      debugPrint('安排提醒失敗: $error');
+      _setReminderState(nextReminderAt: null, error: _reminderErrorText(error));
     }
   }
 
-  Future<void> _scheduleNotifications() async {
-    final lastStart = await DatabaseService.instance.findLastPeriodStartDate();
-    if (lastStart == null) {
-      await NotificationService.instance.cancelAll();
-      return;
-    }
-
-    var nextPeriod = lastStart.add(Duration(days: _cycleLength));
-    final today = DateTime.now();
-    while (!nextPeriod.isAfter(today)) {
-      nextPeriod = nextPeriod.add(Duration(days: _cycleLength));
-    }
-    await NotificationService.instance.schedulePeriodReminders(
-      nextPeriod,
-      _reminderDays,
-      _reminderTime,
-    );
+  /// A short reason for settings; platform errors otherwise include a full
+  /// Java stack trace.
+  static String _reminderErrorText(Object error) {
+    if (error is PlatformException) return error.message ?? error.code;
+    if (error is StateError) return error.message;
+    return '$error';
   }
 
-  static const Set<int> _allowedReminderDays = <int>{0, 1, 3, 7};
+  void _setReminderState({DateTime? nextReminderAt, String? error}) {
+    if (_nextReminderAt == nextReminderAt && _reminderError == error) return;
+    _nextReminderAt = nextReminderAt;
+    _reminderError = error;
+    _notify();
+  }
+
+  void _notify() {
+    if (!_isDisposed) notifyListeners();
+  }
 
   int _validCycleLength(int? value) {
     if (value == null ||
@@ -208,7 +287,9 @@ class UserSettingsProvider extends ChangeNotifier {
   }
 
   int _validPeriodLength(int? value) {
-    if (value == null || value < 1 || value > 10) {
+    if (value == null ||
+        value < AppConstants.minPeriodLength ||
+        value > AppConstants.maxPeriodLength) {
       return AppConstants.defaultPeriodLength;
     }
     return value;
@@ -218,7 +299,7 @@ class UserSettingsProvider extends ChangeNotifier {
     final parsed = values
             ?.map(int.tryParse)
             .whereType<int>()
-            .where(_allowedReminderDays.contains)
+            .where(AppConstants.reminderDayOptions.contains)
             .toSet() ??
         <int>{1};
     return parsed;

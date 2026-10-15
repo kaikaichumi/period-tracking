@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:table_calendar/table_calendar.dart';
 
 import 'package:period_tracking/main.dart';
 import 'package:period_tracking/models/daily_record.dart';
@@ -41,7 +44,7 @@ void main() {
       await DatabaseService.instance.resetForTesting();
     });
 
-    testWidgets('no record shows 未記錄 and 標記為經期 filled button',
+    testWidgets('no record shows 這天未標記為經期 and 標記為經期 filled button',
         (tester) async {
       DailyRecord? saved;
       await tester.pumpWidget(_sheetHarness(onSave: (record) async { saved = record; }));
@@ -49,9 +52,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('月經狀態'), findsOneWidget);
-      expect(find.text('未記錄'), findsOneWidget);
+      expect(find.text('這天未標記為經期'), findsOneWidget);
       expect(find.widgetWithText(FilledButton, '標記為經期'), findsOneWidget);
-      expect(find.widgetWithText(OutlinedButton, '結束經期'), findsNothing);
+      expect(find.widgetWithText(OutlinedButton, '取消經期標記'), findsNothing);
       expect(saved, isNull);
     });
 
@@ -66,7 +69,7 @@ void main() {
       await tester.pump();
       await tester.pumpAndSettle();
 
-      expect(find.text('未記錄'), findsOneWidget);
+      expect(find.text('這天未標記為經期'), findsOneWidget);
       expect(find.widgetWithText(FilledButton, '標記為經期'), findsOneWidget);
     });
 
@@ -80,8 +83,8 @@ void main() {
       await tester.pump();
       await tester.pumpAndSettle();
 
-      expect(find.text('來潮中'), findsOneWidget);
-      expect(find.widgetWithText(OutlinedButton, '結束經期'), findsOneWidget);
+      expect(find.text('這天已標記為經期'), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, '取消經期標記'), findsOneWidget);
       expect(find.text('出血量'), findsOneWidget);
       expect(find.text('疼痛程度'), findsOneWidget);
     });
@@ -95,8 +98,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(saved, isEmpty);
-      expect(find.text('來潮中'), findsOneWidget);
-      expect(find.widgetWithText(OutlinedButton, '結束經期'), findsOneWidget);
+      expect(find.text('這天已標記為經期'), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, '取消經期標記'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('save_record_button')));
       await tester.pumpAndSettle();
@@ -104,6 +107,80 @@ void main() {
       expect(saved, hasLength(1));
       expect(saved.single.hasPeriod, isTrue);
       expect(saved.single.bleedingLevel, BleedingLevel.medium);
+      // The pain slider was never touched, so no pain score is recorded.
+      expect(saved.single.painLevel, isNull);
+    });
+  });
+
+  group('HomeScreen', () {
+    Future<void> pumpHome(
+      WidgetTester tester,
+      List<DailyRecord> records,
+    ) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'daily_records':
+            jsonEncode(records.map((record) => record.toJson()).toList()),
+      });
+      await DatabaseService.instance.resetForTesting();
+      await tester.pumpWidget(
+        ChangeNotifierProvider<UserSettingsProvider>(
+          create: (_) => UserSettingsProvider(),
+          child: const MyApp(),
+        ),
+      );
+      for (var attempt = 0; attempt < 20; attempt++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        if (find.text('你的週期摘要').evaluate().isNotEmpty) break;
+      }
+    }
+
+    DateTime day(int offset) {
+      final now = DateTime.now();
+      return DateTime(now.year, now.month, now.day + offset);
+    }
+
+    testWidgets('經期比預估晚時顯示延遲天數，不顯示已過的預估日', (tester) async {
+      await pumpHome(tester, <DailyRecord>[
+        for (var i = 0; i < 5; i++)
+          DailyRecord(
+            date: day(-35 + i),
+            hasPeriod: true,
+            bleedingLevel: BleedingLevel.medium,
+          ),
+      ]);
+
+      expect(find.text('比預估晚了'), findsOneWidget);
+      expect(find.text('7 天'), findsOneWidget);
+      expect(find.text('下次預估'), findsNothing);
+    });
+
+    testWidgets('日曆只在範圍模式下允許選取範圍，記錄面板不能下滑關閉',
+        (tester) async {
+      await pumpHome(tester, <DailyRecord>[
+        DailyRecord(
+          date: day(-3),
+          hasPeriod: true,
+          bleedingLevel: BleedingLevel.medium,
+        ),
+      ]);
+
+      expect(
+        tester.widget<TableCalendar<void>>(find.byType(TableCalendar<void>))
+            .rangeSelectionMode,
+        RangeSelectionMode.disabled,
+      );
+
+      await tester.tap(find.text('記錄這一天'));
+      // The full app keeps a progress indicator running on another tab, so
+      // pump a fixed time instead of waiting for it to settle.
+      for (var attempt = 0; attempt < 10; attempt++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      expect(
+        tester.widget<BottomSheet>(find.byType(BottomSheet)).enableDrag,
+        isFalse,
+      );
     });
   });
 
