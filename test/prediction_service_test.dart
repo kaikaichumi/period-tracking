@@ -206,15 +206,15 @@ void main() {
     expect(stats['averagePainLevel'], '6.0');
   });
 
-  test('常見症狀以記錄天數呈現，不會產生超過 100% 的比例', () {
+  test('常見症狀以記錄天數呈現，並顯示中文名稱', () {
     final records = <DailyRecord>[
       DailyRecord(
         date: DateTime(2026, 1, 1),
-        symptoms: <String, bool>{'頭痛': true},
+        symptoms: <String, bool>{'headache': true},
       ),
       DailyRecord(
         date: DateTime(2026, 1, 2),
-        symptoms: <String, bool>{'頭痛': true},
+        symptoms: <String, bool>{'headache': true},
       ),
     ];
 

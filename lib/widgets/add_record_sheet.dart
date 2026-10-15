@@ -36,7 +36,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
   /// as "no pain" and doesn't drag down the average.
   int? _painLevel;
   final Map<String, bool> _symptoms = <String, bool>{
-    for (final symptom in AppConstants.symptoms) symptom: false,
+    for (final id in AppConstants.symptomLabels.keys) id: false,
   };
   bool _hasIntimacy = false;
   int _intimacyFrequency = 1;
@@ -326,7 +326,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
             runSpacing: 8,
             children: _symptoms.entries.map((entry) {
               return FilterChip(
-                label: Text(entry.key),
+                label: Text(AppConstants.symptomLabel(entry.key)),
                 selected: entry.value,
                 onSelected: (selected) {
                   setState(() {

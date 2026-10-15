@@ -31,7 +31,7 @@ void main() {
     await database.saveDailyRecord(
       DailyRecord(
         date: DateTime(2026, 1, 5),
-        symptoms: <String, bool>{'頭痛': true},
+        symptoms: <String, bool>{'headache': true},
       ),
     );
 
@@ -114,6 +114,80 @@ void main() {
 
     expect(await recoveryCopies(), <String>['{not json']);
     expect(await database.getAllDailyRecords(), hasLength(1));
+  });
+
+  test('舊版存的資料照常讀取，下次儲存時整份改成新格式', () async {
+    final legacy = jsonEncode(<Object>[
+      <String, Object?>{
+        'id': 0,
+        'date': '2025-05-01T00:00:00.000',
+        'hasPeriod': true,
+        'bleedingLevel': 4,
+        'painLevel': 5,
+        'symptoms': <String, bool>{'頭痛': true, '腹脹': false},
+        'hasIntimacy': false,
+        'intimacyFrequency': null,
+        'contraceptionMethod': null,
+        'notes': '舊資料',
+        'intimacyNotes': null,
+        'isPeriodEndDay': false,
+      },
+    ]);
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'daily_records': legacy,
+      'next_id': 1,
+    });
+    await database.resetForTesting();
+
+    final before = await database.getAllDailyRecords();
+    expect(before.single.bleedingLevel, BleedingLevel.heavy);
+    expect(before.single.symptoms['headache'], isTrue);
+
+    await database.saveDailyRecord(DailyRecord(date: DateTime(2025, 5, 2)));
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getInt('daily_records_schema_version'), 2);
+    final stored = (jsonDecode(prefs.getString('daily_records')!) as List)
+        .cast<Map<String, dynamic>>();
+    final migrated =
+        stored.singleWhere((json) => json['date'] == '2025-05-01T00:00:00.000');
+    expect(migrated['bleedingLevel'], 'heavy');
+    expect(migrated['symptoms'], <String, dynamic>{
+      'headache': true,
+      'bloating': false,
+    });
+    expect(migrated['notes'], '舊資料');
+    expect(await recoveryCopies(), isEmpty);
+  });
+
+  test('較新版本存的資料會先另存一份，避免被這個版本覆蓋掉', () async {
+    final raw = jsonEncode(<Object>[
+      DailyRecord(date: DateTime(2026, 6, 1), hasPeriod: true).toJson(),
+    ]);
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'daily_records': raw,
+      'daily_records_schema_version': 3,
+    });
+    await database.resetForTesting();
+
+    expect(await database.getAllDailyRecords(), hasLength(1));
+    expect(await recoveryCopies(), <String>[raw]);
+  });
+
+  test('刪除所有記錄時，復原用的副本也一起刪掉', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'daily_records': '{not json',
+    });
+    await database.resetForTesting();
+    await database.getAllDailyRecords();
+    expect(await recoveryCopies(), hasLength(1));
+
+    await database.clearAllData();
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(await recoveryCopies(), isEmpty);
+    expect(prefs.getString('daily_records'), isNull);
+    expect(prefs.getInt('daily_records_schema_version'), isNull);
   });
 
   test('單筆記錄壞掉時只略過那一筆，原始資料另存一份', () async {

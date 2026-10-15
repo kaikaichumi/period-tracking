@@ -22,7 +22,22 @@ void main() {
       _encode(<String, Object?>{
         'version': '1.0.0',
         'backup_date': '2025-03-01T10:00:00.000',
-        'records': <Object>[record.toJson()],
+        'records': <Object>[
+          <String, Object?>{
+            'id': 0,
+            'date': '2025-02-01T00:00:00.000',
+            'hasPeriod': true,
+            'bleedingLevel': 2,
+            'painLevel': null,
+            'symptoms': <String, bool>{'疲勞': true},
+            'hasIntimacy': false,
+            'intimacyFrequency': null,
+            'contraceptionMethod': null,
+            'notes': null,
+            'intimacyNotes': null,
+            'isPeriodEndDay': false,
+          },
+        ],
         'settings': <String, Object?>{
           ...validSettings,
           'reminderDays': <int>[7, 3, 1, 0],
@@ -30,8 +45,29 @@ void main() {
       }),
     );
 
-    expect(parsed.records, hasLength(1));
+    expect(parsed.records.single.bleedingLevel, BleedingLevel.light);
+    expect(parsed.records.single.symptoms, <String, bool>{'fatigue': true});
     expect(parsed.backupDate, DateTime(2025, 3, 1, 10));
+  });
+
+  test('新格式的備份可以完整讀回', () {
+    final parsed = BackupService.parseBackup(
+      _encode(<String, Object?>{
+        'version': 3,
+        'records': <Object>[
+          DailyRecord(
+            date: DateTime(2026, 9, 1),
+            hasPeriod: true,
+            bleedingLevel: BleedingLevel.spotting,
+            symptoms: <String, bool>{'insomnia': true},
+          ).toJson(),
+        ],
+        'settings': validSettings,
+      }),
+    );
+
+    expect(parsed.records.single.bleedingLevel, BleedingLevel.spotting);
+    expect(parsed.records.single.symptoms, <String, bool>{'insomnia': true});
   });
 
   test('沒有任何記錄的備份不能拿來還原', () {

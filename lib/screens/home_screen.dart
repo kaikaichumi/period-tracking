@@ -7,6 +7,7 @@ import '../models/daily_record.dart';
 import '../providers/user_settings_provider.dart';
 import '../services/database_service.dart';
 import '../services/prediction_service.dart';
+import '../utils/constants.dart';
 import '../utils/date_utils.dart' as date_utils;
 import '../widgets/add_record_sheet.dart';
 
@@ -385,7 +386,7 @@ class _HomeScreenState extends State<HomeScreen> {
         !(record?.hasPeriod ?? false);
     final activeSymptoms = record?.symptoms.entries
             .where((entry) => entry.value)
-            .map((entry) => entry.key)
+            .map((entry) => AppConstants.symptomLabel(entry.key))
             .toList() ??
         <String>[];
 

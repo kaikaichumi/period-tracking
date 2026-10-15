@@ -18,17 +18,21 @@ class AppConstants {
   /// 可選的提醒日（預估經期開始前幾天）。
   static const Set<int> reminderDayOptions = <int>{0, 1, 3, 7};
 
-  /// 可記錄的症狀。這些文字同時是已儲存資料的鍵，改名會讓舊記錄對不上。
-  static const List<String> symptoms = <String>[
-    '情緒變化',
-    '乳房脹痛',
-    '腰痛',
-    '頭痛',
-    '疲勞',
-    '痘痘',
-    '噁心',
-    '食慾改變',
-    '失眠',
-    '腹脹',
-  ];
+  /// 可記錄的症狀（依顯示順序）：儲存用的代號 → 畫面上的名稱。
+  /// 代號會寫進記錄與備份，不能改；名稱可以隨時調整。
+  static const Map<String, String> symptomLabels = <String, String>{
+    'mood_changes': '情緒變化',
+    'breast_tenderness': '乳房脹痛',
+    'back_pain': '腰痛',
+    'headache': '頭痛',
+    'fatigue': '疲勞',
+    'acne': '痘痘',
+    'nausea': '噁心',
+    'appetite_changes': '食慾改變',
+    'insomnia': '失眠',
+    'bloating': '腹脹',
+  };
+
+  /// 症狀代號的顯示名稱；不認得的代號（例如舊版本留下的）直接顯示原文。
+  static String symptomLabel(String id) => symptomLabels[id] ?? id;
 }

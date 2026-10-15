@@ -4,6 +4,7 @@ import 'package:collection/collection.dart';
 
 import '../models/daily_record.dart';
 import '../models/user_settings.dart';
+import '../utils/constants.dart';
 import '../utils/date_utils.dart';
 
 /// The next-period estimate. The calendar, the analysis page and reminders all
@@ -117,7 +118,10 @@ class PredictionService {
     final commonSymptoms = symptomCounts.entries
         .sorted((a, b) => b.value.compareTo(a.value))
         .take(5)
-        .map((entry) => '${entry.key}（${entry.value} 天）')
+        .map(
+          (entry) =>
+              '${AppConstants.symptomLabel(entry.key)}（${entry.value} 天）',
+        )
         .toList();
 
     return <String, dynamic>{

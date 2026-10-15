@@ -76,7 +76,8 @@ class BackupService {
         'records': records.map((record) => record.toJson()).toList(),
         'settings': settings.toJson(),
         'backup_date': backupDate.toIso8601String(),
-        'version': 2,
+        // 3: records use enum names and symptom IDs (see DailyRecord.toJson).
+        'version': 3,
       };
       final content = utf8.encode(jsonEncode(backupData));
       final file = drive.File()

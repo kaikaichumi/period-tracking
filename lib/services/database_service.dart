@@ -17,6 +17,12 @@ class DatabaseService {
   static const String _nextIdKey = 'next_id';
   static const String _isInPeriodKey = 'is_in_period';
   static const String _recoveryKeyPrefix = 'daily_records_recovery_';
+  static const String _schemaVersionKey = 'daily_records_schema_version';
+
+  /// Format of the stored records. 1 (no key saved): enums by index and
+  /// symptoms by Chinese label. 2: enums by name and symptoms by ID. Both are
+  /// readable; every save writes the current one.
+  static const int _schemaVersion = 2;
 
   static SharedPreferences? _prefs;
   static int _nextId = 0;
@@ -44,6 +50,11 @@ class DatabaseService {
     final pref = await prefs;
     final recordsJson = pref.getString(_dailyRecordsKey);
     if (recordsJson == null || recordsJson.isEmpty) return <DailyRecord>[];
+    // A newer app version may have saved fields this one would drop on the
+    // next save, e.g. after a downgrade, so keep an untouched copy first.
+    if ((pref.getInt(_schemaVersionKey) ?? 1) > _schemaVersion) {
+      await _keepRecoveryCopy(pref, recordsJson);
+    }
 
     Object? decoded;
     try {
@@ -144,12 +155,23 @@ class DatabaseService {
     });
   }
 
+  /// Deletes every record on the device, including recovery copies.
   Future<void> clearAllData() {
     return _serializedWrite(() async {
       final pref = await prefs;
-      await pref.remove(_dailyRecordsKey);
-      await pref.remove(_nextIdKey);
-      await pref.remove(_isInPeriodKey);
+      final recoveryKeys = pref
+          .getKeys()
+          .where((key) => key.startsWith(_recoveryKeyPrefix))
+          .toList();
+      for (final key in <String>[
+        _dailyRecordsKey,
+        _nextIdKey,
+        _isInPeriodKey,
+        _schemaVersionKey,
+        ...recoveryKeys,
+      ]) {
+        await pref.remove(key);
+      }
       _nextId = 0;
       revision.value++;
     });
@@ -158,11 +180,13 @@ class DatabaseService {
   Future<void> _saveRecords(List<DailyRecord> records) async {
     final sorted = List<DailyRecord>.from(records)
       ..sort((a, b) => b.date.compareTo(a.date));
-    final saved = await (await prefs).setString(
+    final pref = await prefs;
+    final saved = await pref.setString(
       _dailyRecordsKey,
       jsonEncode(sorted.map((record) => record.toJson()).toList()),
     );
     if (!saved) throw StateError('無法儲存每日記錄');
+    await pref.setInt(_schemaVersionKey, _schemaVersion);
   }
 
   Future<T> _serializedWrite<T>(Future<T> Function() write) {

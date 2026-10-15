@@ -48,55 +48,88 @@ class DailyRecord {
     this.isPeriodEndDay = false, // 預設為 false
   }) : symptoms = symptoms ??
             <String, bool>{
-              for (final symptom in AppConstants.symptoms) symptom: false,
+              for (final id in AppConstants.symptomLabels.keys) id: false,
             };
 
+  /// Enums are stored by name and symptoms by ID, so reordering an enum or
+  /// renaming a symptom label can't change what saved records mean.
   Map<String, dynamic> toJson() {
     return {
       'id': id,
       'date': date.toIso8601String(),
       'hasPeriod': hasPeriod,
-      'bleedingLevel': bleedingLevel?.index,
+      'bleedingLevel': bleedingLevel?.name,
       'painLevel': painLevel,
       'symptoms': symptoms,
       'hasIntimacy': hasIntimacy,
       'intimacyFrequency': intimacyFrequency,
-      'contraceptionMethod': contraceptionMethod?.index,
+      'contraceptionMethod': contraceptionMethod?.name,
       'notes': notes,
       'intimacyNotes': intimacyNotes,
       'isPeriodEndDay': isPeriodEndDay, // 新增字段
     };
   }
 
+  /// Reads the current format as well as the earlier one, which stored enums
+  /// by index and symptoms by their Chinese label.
   factory DailyRecord.fromJson(Map<String, dynamic> json) {
-    final bleedingIndex = json['bleedingLevel'] as int?;
-    final contraceptionIndex = json['contraceptionMethod'] as int?;
-    if (bleedingIndex != null &&
-        (bleedingIndex < 0 || bleedingIndex >= BleedingLevel.values.length)) {
-      throw const FormatException('出血量資料格式不正確');
-    }
-    if (contraceptionIndex != null &&
-        (contraceptionIndex < 0 ||
-            contraceptionIndex >= ContraceptionMethod.values.length)) {
-      throw const FormatException('避孕方式資料格式不正確');
-    }
     return DailyRecord(
       id: json['id'] as int?,
       date: DateTime.parse(json['date'] as String),
       hasPeriod: json['hasPeriod'] as bool? ?? false,
-      bleedingLevel:
-          bleedingIndex != null ? BleedingLevel.values[bleedingIndex] : null,
+      bleedingLevel: _enumFromJson(
+        BleedingLevel.values,
+        json['bleedingLevel'],
+        '出血量資料格式不正確',
+      ),
       painLevel: json['painLevel'] as int?,
-      symptoms: Map<String, bool>.from(json['symptoms'] ?? {}),
+      symptoms: _symptomsFromJson(json['symptoms']),
       hasIntimacy: json['hasIntimacy'] as bool? ?? false,
       intimacyFrequency: json['intimacyFrequency'] as int?,
-      contraceptionMethod: contraceptionIndex != null
-          ? ContraceptionMethod.values[contraceptionIndex]
-          : null,
+      contraceptionMethod: _enumFromJson(
+        ContraceptionMethod.values,
+        json['contraceptionMethod'],
+        '避孕方式資料格式不正確',
+      ),
       notes: json['notes'] as String?,
       intimacyNotes: json['intimacyNotes'] as String?,
       isPeriodEndDay: json['isPeriodEndDay'] as bool? ?? false, // 新增解析
     );
+  }
+
+  static T? _enumFromJson<T extends Enum>(
+    List<T> values,
+    Object? raw,
+    String error,
+  ) {
+    if (raw == null) return null;
+    if (raw is String) {
+      for (final value in values) {
+        if (value.name == raw) return value;
+      }
+    } else if (raw is int && raw >= 0 && raw < values.length) {
+      return values[raw];
+    }
+    throw FormatException(error);
+  }
+
+  static final Map<String, String> _symptomIdsByLabel = <String, String>{
+    for (final entry in AppConstants.symptomLabels.entries)
+      entry.value: entry.key,
+  };
+
+  /// Converts old label keys to IDs; keys it doesn't know are kept as is.
+  static Map<String, bool> _symptomsFromJson(Object? raw) {
+    if (raw == null) return <String, bool>{};
+    if (raw is! Map) throw const FormatException('症狀資料格式不正確');
+    final symptoms = <String, bool>{};
+    raw.forEach((key, value) {
+      if (key is! String || value is! bool) {
+        throw const FormatException('症狀資料格式不正確');
+      }
+      symptoms[_symptomIdsByLabel[key] ?? key] = value;
+    });
+    return symptoms;
   }
 
   DailyRecord copyWith({
