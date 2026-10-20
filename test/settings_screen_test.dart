@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -37,5 +38,39 @@ void main() {
 
     expect(find.byType(AlertDialog), findsNothing);
     expect(settings.cycleLength, 30);
+  });
+
+  testWidgets('Android 提供 Google Drive 備份，並說明不會自動備份', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await tester.pumpWidget(
+      ChangeNotifierProvider<UserSettingsProvider>(
+        create: (_) => UserSettingsProvider(),
+        child: const MaterialApp(home: SettingsScreen()),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('登入 Google 帳號'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('資料儲存方式'), 200);
+    expect(find.textContaining('不會隨系統自動備份上傳'), findsOneWidget);
+  });
+
+  testWidgets('iOS 沒有 Google 用戶端 ID 時不提供登入，並說明 iCloud 備份', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await tester.pumpWidget(
+      ChangeNotifierProvider<UserSettingsProvider>(
+        create: (_) => UserSettingsProvider(),
+        child: const MaterialApp(home: SettingsScreen()),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('這個版本尚未提供雲端備份'), findsOneWidget);
+    expect(find.text('登入 Google 帳號'), findsNothing);
+    expect(find.text('建立備份'), findsNothing);
+    await tester.scrollUntilVisible(find.text('資料儲存方式'), 200);
+    expect(find.textContaining('iCloud 備份'), findsOneWidget);
+    debugDefaultTargetPlatformOverride = null;
   });
 }

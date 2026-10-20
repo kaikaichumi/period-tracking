@@ -15,6 +15,12 @@ class AppConstants {
   static const int minPeriodLength = 1;
   static const int maxPeriodLength = 10;
 
+  /// iOS 版 Google 登入的 OAuth 用戶端 ID（結尾是 .apps.googleusercontent.com）。
+  /// 要建立在和 Android 相同的 Google Cloud 專案，兩邊才看得到同一份備份；
+  /// 反轉後的 ID 也必須加進 ios/Runner/Info.plist 的 CFBundleURLTypes，否則登入時
+  /// App 會閃退。留空時 iOS 版不提供 Google Drive 備份。
+  static const String googleIosClientId = '';
+
   /// 可選的提醒日（預估經期開始前幾天）。
   static const Set<int> reminderDayOptions = <int>{0, 1, 3, 7};
 

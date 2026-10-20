@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -110,61 +111,70 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: '私人備份',
                 icon: Icons.cloud_outlined,
                 children: <Widget>[
-                  ListTile(
-                    title: const Text('Google Drive App Data'),
-                    subtitle: Text(
-                      _isCheckingSignIn
-                          ? '正在檢查登入狀態…'
-                          : _isSignedIn
-                              ? '已登入；備份只會存放在此 App 的私人資料夾'
-                              : '尚未登入 Google 帳號',
+                  if (!BackupService.isAvailable)
+                    const ListTile(
+                      title: Text('Google Drive 備份'),
+                      subtitle: Text('這個版本尚未提供雲端備份'),
+                      trailing: Icon(Icons.cloud_off_outlined),
+                    )
+                  else ...<Widget>[
+                    ListTile(
+                      title: const Text('Google Drive App Data'),
+                      subtitle: Text(
+                        _isCheckingSignIn
+                            ? '正在檢查登入狀態…'
+                            : _isSignedIn
+                                ? '已登入；備份只會存放在此 App 的私人資料夾'
+                                : '尚未登入 Google 帳號',
+                      ),
+                      trailing: _isCheckingSignIn
+                          ? const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(
+                              _isSignedIn
+                                  ? Icons.cloud_done_outlined
+                                  : Icons.cloud_off_outlined,
+                            ),
                     ),
-                    trailing: _isCheckingSignIn
-                        ? const SizedBox.square(
-                            dimension: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Icon(
-                            _isSignedIn
-                                ? Icons.cloud_done_outlined
-                                : Icons.cloud_off_outlined,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      child: Row(
+                        children: <Widget>[
+                          Expanded(
+                            child: FilledButton.tonalIcon(
+                              onPressed: _isBusy || !_isSignedIn
+                                  ? null
+                                  : () => _backup(settings),
+                              icon: const Icon(Icons.backup_outlined),
+                              label: const Text('建立備份'),
+                            ),
                           ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                    child: Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: FilledButton.tonalIcon(
-                            onPressed: _isBusy || !_isSignedIn
-                                ? null
-                                : () => _backup(settings),
-                            icon: const Icon(Icons.backup_outlined),
-                            label: const Text('建立備份'),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _isBusy || !_isSignedIn
+                                  ? null
+                                  : () => _restore(settings),
+                              icon: const Icon(Icons.restore),
+                              label: const Text('從備份還原'),
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: _isBusy || !_isSignedIn
-                                ? null
-                                : () => _restore(settings),
-                            icon: const Icon(Icons.restore),
-                            label: const Text('從備份還原'),
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                  ListTile(
-                    leading: Icon(
-                      _isSignedIn ? Icons.logout : Icons.login,
+                    ListTile(
+                      leading: Icon(
+                        _isSignedIn ? Icons.logout : Icons.login,
+                      ),
+                      title:
+                          Text(_isSignedIn ? '登出 Google 帳號' : '登入 Google 帳號'),
+                      onTap: _isBusy || _isCheckingSignIn
+                          ? null
+                          : _toggleGoogleSignIn,
                     ),
-                    title: Text(_isSignedIn ? '登出 Google 帳號' : '登入 Google 帳號'),
-                    onTap: _isBusy || _isCheckingSignIn
-                        ? null
-                        : _toggleGoogleSignIn,
-                  ),
+                  ],
                 ],
               ),
               const SizedBox(height: 12),
@@ -172,11 +182,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: '資料與隱私',
                 icon: Icons.lock_outline,
                 children: <Widget>[
-                  const ListTile(
-                    title: Text('資料儲存方式'),
-                    subtitle: Text(
-                      '每日記錄只保存在這台裝置，不會隨系統自動備份上傳。只有你主動建立備份時，才會上傳到 Google Drive 的 App 私人資料夾；換手機前請先建立備份。',
-                    ),
+                  ListTile(
+                    title: const Text('資料儲存方式'),
+                    subtitle: Text(_storageDescription()),
                   ),
                   ListTile(
                     leading: const Icon(Icons.restart_alt),
@@ -211,6 +219,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
+  }
+
+  String _storageDescription() {
+    // Android excludes the records from system backups (see
+    // data_extraction_rules.xml); iOS puts them in iCloud device backups.
+    if (defaultTargetPlatform != TargetPlatform.iOS) {
+      return '每日記錄只保存在這台裝置，不會隨系統自動備份上傳。只有你主動建立備份時，才會上傳到 Google Drive 的 App 私人資料夾；換手機前請先建立備份。';
+    }
+    if (!BackupService.isAvailable) {
+      return '每日記錄保存在這台裝置。若你開啟了 iCloud 備份，iOS 會把 App 資料一併放進裝置備份；App 本身不會把記錄上傳到其他地方。';
+    }
+    return '每日記錄保存在這台裝置。若你開啟了 iCloud 備份，iOS 會把 App 資料一併放進裝置備份。只有你主動建立備份時，才會上傳到 Google Drive 的 App 私人資料夾。';
   }
 
   Widget _section({
@@ -333,7 +353,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (enabled) {
       final granted = await NotificationService.instance.requestPermissions();
       if (!granted) {
-        _showMessage('未取得通知權限，提醒未開啟。');
+        _showMessage('未取得通知權限，提醒未開啟。請到系統設定允許 LunaCare 傳送通知。');
         return;
       }
     }
@@ -409,7 +429,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _sendTestNotification() async {
     final granted = await NotificationService.instance.checkPermissions();
     if (!granted) {
-      _showMessage('系統通知權限目前未開啟。');
+      _showMessage('系統通知權限目前未開啟。請到系統設定允許 LunaCare 傳送通知。');
       return;
     }
     await _run(

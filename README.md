@@ -52,7 +52,7 @@
 
 ### 開發環境
 - **框架**：Flutter
-- **平台**：Android
+- **平台**：Android、iOS
 - **語言**：Dart
 - **資料儲存**：本地儲存 + Google 雲端備份
 
@@ -71,6 +71,7 @@
 - Flutter 3.41（stable）以上
 - Android Studio / VS Code
 - Android SDK
+- iOS：macOS、Xcode 26 以上、CocoaPods
 - Git
 
 ### 建置步驟
@@ -93,7 +94,35 @@
 
 ### 發布版本建置
 
+Android：
+
     flutter build apk --release
+
+iOS（需在 Mac 上執行）：
+
+    flutter build ipa --release
+
+第一次建置前，請用 Xcode 開啟 `ios/Runner.xcworkspace`，在 Runner 的 Signing & Capabilities 選擇你的 Apple Developer Team。產生的 `build/ios/ipa/*.ipa` 可用 Transporter 或 Xcode Organizer 上傳到 App Store Connect。
+
+### iOS 的 Google Drive 備份
+
+iOS 版需要自己的 OAuth 用戶端，沒有設定時設定頁不會出現 Google 登入。
+
+1. 在 Android 版使用的同一個 Google Cloud 專案中，建立「iOS」類型的 OAuth 用戶端，套件 ID 填 `com.techcare.lunacare`。必須是同一個專案，iOS 才讀得到 Android 版建立的備份。
+2. 把用戶端 ID 填進 `lib/utils/constants.dart` 的 `googleIosClientId`。
+3. 在 `ios/Runner/Info.plist` 加上反轉後的用戶端 ID 作為網址配置，否則登入時 App 會閃退：
+
+        <key>CFBundleURLTypes</key>
+        <array>
+            <dict>
+                <key>CFBundleURLSchemes</key>
+                <array>
+                    <string>com.googleusercontent.apps.你的用戶端ID前綴</string>
+                </array>
+            </dict>
+        </array>
+
+`flutter test` 會檢查這兩處是否一致。
 
 ## 🎨 介面截圖
 
@@ -119,7 +148,7 @@
 
 ## 🔒 隱私與安全
 
-- **只存在本機**：記錄只儲存在裝置上，也不會隨 Android 系統自動備份上傳
+- **只存在本機**：記錄只儲存在裝置上，也不會隨 Android 系統自動備份上傳；iOS 則會依你的 iCloud 備份設定，把 App 資料放進裝置備份
 - **傳輸加密**：手動備份透過 HTTPS 上傳到你的 Google Drive App 私人資料夾（備份檔本身沒有另外加密）
 - **隱私保護**：不收集個人識別資訊
 - **離線使用**：核心功能支援離線操作

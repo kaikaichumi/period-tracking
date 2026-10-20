@@ -36,7 +36,18 @@ class BackupService {
 
   static const String _recordCountProperty = 'recordCount';
 
+  /// Whether Google Drive backup can be offered here. iOS needs its own OAuth
+  /// client; signing in without one crashes the app.
+  static bool get isAvailable =>
+      defaultTargetPlatform != TargetPlatform.iOS ||
+      AppConstants.googleIosClientId.isNotEmpty;
+
   final GoogleSignIn _googleSignIn = GoogleSignIn(
+    // Android finds its client from the package name and signing key.
+    clientId: defaultTargetPlatform == TargetPlatform.iOS &&
+            AppConstants.googleIosClientId.isNotEmpty
+        ? AppConstants.googleIosClientId
+        : null,
     scopes: <String>[
       'https://www.googleapis.com/auth/drive.appdata',
     ],
@@ -45,6 +56,7 @@ class BackupService {
   BackupService._init();
 
   Future<bool> isSignedIn() async {
+    if (!isAvailable) return false;
     try {
       return await _googleSignIn.isSignedIn();
     } on Object {
@@ -53,6 +65,7 @@ class BackupService {
   }
 
   Future<void> signIn() async {
+    if (!isAvailable) throw const BackupException('這個版本尚未提供雲端備份');
     final account = await _googleSignIn.signIn();
     if (account == null) throw const BackupException('登入已取消');
   }

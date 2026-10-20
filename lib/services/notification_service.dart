@@ -109,9 +109,22 @@ class NotificationService {
               ?.areNotificationsEnabled() ??
           false;
     }
-    // Apple platforms expose the system prompt through requestPermissions;
-    // avoid showing it during a passive status check.
-    return true;
+    // Unlike requestPermissions, these never show the system prompt.
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      final options = await _notifications
+          .resolvePlatformSpecificImplementation<
+              IOSFlutterLocalNotificationsPlugin>()
+          ?.checkPermissions();
+      return options?.isEnabled ?? false;
+    }
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      final options = await _notifications
+          .resolvePlatformSpecificImplementation<
+              MacOSFlutterLocalNotificationsPlugin>()
+          ?.checkPermissions();
+      return options?.isEnabled ?? false;
+    }
+    return false;
   }
 
   /// Works out when each reminder should fire, skipping times already past.
