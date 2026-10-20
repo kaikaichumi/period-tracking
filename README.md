@@ -68,10 +68,10 @@
 ## 📦 安裝說明
 
 ### 環境需求
-- Flutter 3.41（stable）以上
+- Flutter 3.47.7（stable）以上
 - Android Studio / VS Code
 - Android SDK
-- iOS：macOS、Xcode 26 以上、CocoaPods
+- iOS：macOS、Xcode 26 以上、CocoaPods（App 支援 iOS 15 以上的 iPhone）
 - Git
 
 ### 建置步驟
