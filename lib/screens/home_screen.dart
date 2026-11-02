@@ -6,10 +6,12 @@ import 'package:table_calendar/table_calendar.dart';
 import '../models/daily_record.dart';
 import '../providers/user_settings_provider.dart';
 import '../services/database_service.dart';
+import '../services/period_range_service.dart';
 import '../services/prediction_service.dart';
 import '../utils/constants.dart';
 import '../utils/date_utils.dart' as date_utils;
 import '../widgets/add_record_sheet.dart';
+import '../widgets/period_range_sheet.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -28,9 +30,6 @@ class _HomeScreenState extends State<HomeScreen> {
   int? _predictionRangeDays;
   bool _isLoading = true;
   int _loadToken = 0;
-  bool _rangeMode = false;
-  DateTime? _rangeStart;
-  DateTime? _rangeEnd;
   UserSettingsProvider? _settingsProvider;
 
   @override
@@ -92,29 +91,6 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('LunaCare'),
         centerTitle: false,
-        actions: <Widget>[
-          IconButton(
-            icon: Icon(
-              Icons.date_range,
-              color: _rangeMode ? Colors.pink[200] : null,
-            ),
-            tooltip: '範圍選擇模式',
-            onPressed: () {
-              setState(() {
-                _rangeMode = !_rangeMode;
-                if (!_rangeMode) {
-                  _rangeStart = null;
-                  _rangeEnd = null;
-                }
-              });
-              if (_rangeMode) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('請選擇經期起始日與結束日')),
-                );
-              }
-            },
-          ),
-        ],
       ),
       body: RefreshIndicator(
         onRefresh: _loadEvents,
@@ -165,14 +141,14 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 6),
               Text(
-                '有了第一筆經期日期後，才會顯示個人化預估；目前不會用今天自動猜測。',
+                '選好經期的開始和結束日期後，就會顯示個人化預估；目前不會用今天自動猜測。',
                 style: TextStyle(color: colors.onPrimaryContainer),
               ),
               const SizedBox(height: 12),
               FilledButton.tonalIcon(
-                onPressed: _pickFirstPeriodDate,
+                onPressed: _addPeriod,
                 icon: const Icon(Icons.calendar_month),
-                label: const Text('選擇日期'),
+                label: const Text('記錄經期'),
               ),
             ],
           ),
@@ -182,6 +158,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final formatter = DateFormat('yyyy/MM/dd');
     final next = forecast.nextStart;
+    final latestPeriod = PeriodRangeService.periodContaining(
+      _events.values.toList(),
+      forecast.lastStart,
+    );
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(18),
@@ -206,8 +186,10 @@ class _HomeScreenState extends State<HomeScreen> {
               runSpacing: 12,
               children: <Widget>[
                 _StatusValue(
-                  label: '最近一次開始',
-                  value: formatter.format(forecast.lastStart),
+                  label: '最近一次經期',
+                  value: latestPeriod == null
+                      ? formatter.format(forecast.lastStart)
+                      : formatPeriodRange(latestPeriod),
                 ),
                 if (forecast.isLate)
                   _StatusValue(
@@ -233,6 +215,24 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                FilledButton.tonalIcon(
+                  onPressed: _addPeriod,
+                  icon: const Icon(Icons.add),
+                  label: const Text('新增經期'),
+                ),
+                if (latestPeriod != null)
+                  OutlinedButton.icon(
+                    onPressed: () => _openPeriodSheet(editing: latestPeriod),
+                    icon: const Icon(Icons.edit_calendar_outlined),
+                    label: const Text('調整最近一次'),
+                  ),
               ],
             ),
           ],
@@ -274,30 +274,14 @@ class _HomeScreenState extends State<HomeScreen> {
         CalendarFormat.twoWeeks: '兩週',
         CalendarFormat.week: '週',
       },
-      // `disabled` (not `toggledOff`) so a long press outside range mode
-      // can't start a selection and leave a stray range highlight.
-      rangeSelectionMode: _rangeMode
-          ? RangeSelectionMode.toggledOn
-          : RangeSelectionMode.disabled,
-      rangeStartDay: _rangeStart,
-      rangeEndDay: _rangeEnd,
-      onDaySelected: _rangeMode
-          ? null
-          : (selectedDay, focusedDay) {
-              setState(() {
-                _selectedDay = _dateOnly(selectedDay);
-                _focusedDay = focusedDay;
-              });
-            },
-      onRangeSelected: (start, end, focusedDay) {
+      // Periods are set from the period sheet. `disabled` (not `toggledOff`)
+      // so a long press can't start a selection and leave a stray highlight.
+      rangeSelectionMode: RangeSelectionMode.disabled,
+      onDaySelected: (selectedDay, focusedDay) {
         setState(() {
+          _selectedDay = _dateOnly(selectedDay);
           _focusedDay = focusedDay;
-          _rangeStart = start;
-          _rangeEnd = end;
         });
-        if (start != null && end != null) {
-          _confirmAddPeriodRange(start, end);
-        }
       },
       onFormatChanged: (format) => setState(() => _calendarFormat = format),
       onPageChanged: (focusedDay) => setState(() => _focusedDay = focusedDay),
@@ -382,6 +366,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildSelectedDayCard() {
     final record = _events[_selectedDay];
+    final period = PeriodRangeService.periodContaining(
+      _events.values.toList(),
+      _selectedDay,
+    );
     final isPrediction = _predictedPeriodDays.contains(_selectedDay) &&
         !(record?.hasPeriod ?? false);
     final activeSymptoms = record?.symptoms.entries
@@ -453,41 +441,108 @@ class _HomeScreenState extends State<HomeScreen> {
                   !(record.notes?.isNotEmpty ?? false))
                 const Text('已儲存一筆空白日記錄。'),
             ],
+            if (period != null) ...<Widget>[
+              const Divider(height: 24),
+              Row(
+                children: <Widget>[
+                  Icon(
+                    Icons.date_range,
+                    size: 20,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '這次經期：${formatPeriodRange(period)}'
+                      '（${period.length} 天）',
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => _openPeriodSheet(editing: period),
+                    child: const Text('調整'),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
     );
   }
 
-  Future<void> _pickFirstPeriodDate() async {
+  /// Starts a new period on the selected day, or today when that day is in
+  /// the future or already part of a period.
+  void _addPeriod() {
     final today = _dateOnly(DateTime.now());
-    final firstDate = DateTime(today.year - 2);
-    // The calendar selection can be a future day or older than the picker
-    // allows; the picker asserts that the initial date is within range.
-    final initialDate = _selectedDay.isAfter(today)
-        ? today
-        : _selectedDay.isBefore(firstDate)
-            ? firstDate
-            : _selectedDay;
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: initialDate,
-      firstDate: firstDate,
-      lastDate: today,
-      helpText: '選擇最近一次有經血的日期',
-    );
-    if (picked == null || !mounted) return;
-    setState(() {
-      _selectedDay = _dateOnly(picked);
-      _focusedDay = picked;
-    });
-    _showAddRecordSheet(picked, initialHasPeriod: true);
+    final useSelected = !_selectedDay.isAfter(today) &&
+        PeriodRangeService.periodContaining(
+              _events.values.toList(),
+              _selectedDay,
+            ) ==
+            null;
+    _openPeriodSheet(start: useSelected ? _selectedDay : today);
   }
 
-  Future<void> _showAddRecordSheet(
-    DateTime date, {
-    bool initialHasPeriod = false,
-  }) async {
+  Future<void> _openPeriodSheet({PeriodRange? editing, DateTime? start}) async {
+    final records = _events.values.toList();
+    final typicalLength = _forecast?.periodLength ??
+        context.read<UserSettingsProvider>().settings.periodLength;
+    final change = await showModalBottomSheet<PeriodRangeChange>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      useSafeArea: true,
+      builder: (_) => PeriodRangeSheet(
+        records: records,
+        editing: editing,
+        initialStart: start ?? DateTime.now(),
+        typicalLength: typicalLength,
+      ),
+    );
+    if (change == null || change.isEmpty || !mounted) return;
+
+    // What the changed days looked like before, for undo.
+    final before = <DateTime, DailyRecord?>{
+      for (final record in change.save)
+        _dateOnly(record.date): _events[_dateOnly(record.date)],
+      for (final day in change.delete) day: _events[day],
+    };
+    try {
+      await DatabaseService.instance.updateDailyRecords(
+        save: change.save,
+        delete: change.delete,
+      );
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('儲存失敗：$error')));
+      }
+      return;
+    }
+    if (!mounted) return;
+
+    final range = change.range;
+    if (range != null) setState(() => _focusedDay = range.end);
+    _showUndoSnackBar(
+      range == null
+          ? '已刪除這次經期'
+          : '經期已記錄：${formatPeriodRange(range)}（${range.length} 天）',
+      onUndo: () {
+        DatabaseService.instance.updateDailyRecords(
+          save: <DailyRecord>[
+            for (final record in before.values)
+              if (record != null) record,
+          ],
+          delete: <DateTime>[
+            for (final entry in before.entries)
+              if (entry.value == null) entry.key,
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showAddRecordSheet(DateTime date) async {
     final normalized = _dateOnly(date);
     final existingRecord = _events[normalized];
     await showModalBottomSheet<void>(
@@ -504,29 +559,37 @@ class _HomeScreenState extends State<HomeScreen> {
         child: AddRecordSheet(
           selectedDate: normalized,
           existingRecord: existingRecord,
-          initialHasPeriod: initialHasPeriod,
           onSave: DatabaseService.instance.saveDailyRecord,
           onDelete: existingRecord == null
               ? null
               : () async {
                   await DatabaseService.instance.deleteDailyRecord(normalized);
                   if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: const Text('記錄已刪除'),
-                      action: SnackBarAction(
-                        label: '復原',
-                        onPressed: () {
-                          DatabaseService.instance
-                              .saveDailyRecord(existingRecord);
-                        },
-                      ),
-                    ),
+                  _showUndoSnackBar(
+                    '記錄已刪除',
+                    onUndo: () {
+                      DatabaseService.instance.saveDailyRecord(existingRecord);
+                    },
                   );
                 },
         ),
       ),
     );
+  }
+
+  /// Replaces any snack bar on screen, so an old undo isn't queued in front.
+  void _showUndoSnackBar(String message, {required VoidCallback onUndo}) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          // Snack bars with an action otherwise stay until tapped. Keep them
+          // only for screen reader users, who need time to reach the action.
+          persist: MediaQuery.accessibleNavigationOf(context),
+          action: SnackBarAction(label: '復原', onPressed: onUndo),
+        ),
+      );
   }
 
   String _bleedingLevelToString(BleedingLevel? level) {
@@ -542,94 +605,6 @@ class _HomeScreenState extends State<HomeScreen> {
       case BleedingLevel.none:
       case null:
         return '未填';
-    }
-  }
-
-  Future<void> _confirmAddPeriodRange(DateTime start, DateTime end) async {
-    final normalizedStart = _dateOnly(start);
-    final normalizedEnd = _dateOnly(end);
-    final dayCount =
-        date_utils.DateUtils.daysBetween(normalizedStart, normalizedEnd) + 1;
-    final formatter = DateFormat('yyyy/MM/dd');
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          title: const Text('新增經期'),
-          content: Text(
-            '將 ${formatter.format(normalizedStart)} 至 '
-            '${formatter.format(normalizedEnd)} 標記為經期？(共 $dayCount 天)',
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('取消'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('確認'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (!mounted) return;
-    if (confirmed != true) {
-      setState(() {
-        _rangeMode = false;
-        _rangeStart = null;
-        _rangeEnd = null;
-      });
-      return;
-    }
-
-    final toSave = <DailyRecord>[];
-    for (var i = 0; i < dayCount; i++) {
-      final day = date_utils.DateUtils.addDays(normalizedStart, i);
-      final existing = _events[day];
-      if (existing != null) {
-        toSave.add(
-          existing.copyWith(
-            hasPeriod: true,
-            bleedingLevel: existing.bleedingLevel ?? BleedingLevel.medium,
-          ),
-        );
-      } else {
-        toSave.add(
-          DailyRecord(
-            date: day,
-            hasPeriod: true,
-            bleedingLevel: BleedingLevel.medium,
-          ),
-        );
-      }
-    }
-
-    Object? saveError;
-    try {
-      await DatabaseService.instance.saveDailyRecords(toSave);
-    } on Object catch (error) {
-      saveError = error;
-    }
-    if (!mounted) return;
-
-    setState(() {
-      _rangeMode = false;
-      _rangeStart = null;
-      _rangeEnd = null;
-    });
-    await _loadEvents();
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            saveError == null ? '已新增 $dayCount 天經期記錄' : '新增失敗：$saveError',
-          ),
-        ),
-      );
     }
   }
 

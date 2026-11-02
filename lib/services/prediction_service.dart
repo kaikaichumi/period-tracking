@@ -74,22 +74,30 @@ class PredictionService {
   static List<(DateTime start, int length)> findPeriodDetails(
     List<DailyRecord> records,
   ) {
+    final result = <(DateTime start, int length)>[];
+    for (final group in groupPeriodDays(records)) {
+      _addPeriod(result, group);
+    }
+    return result;
+  }
+
+  /// Splits the recorded period days into periods, oldest first, keeping
+  /// spotting days. Up to [maxMissingDaysInPeriod] unrecorded days inside a
+  /// period don't split it.
+  static List<List<DailyRecord>> groupPeriodDays(List<DailyRecord> records) {
     final periodRecords = records.where((record) => record.hasPeriod).toList()
       ..sort((a, b) => a.date.compareTo(b.date));
 
-    final result = <(DateTime start, int length)>[];
-    var group = <DailyRecord>[];
+    final groups = <List<DailyRecord>>[];
     for (final record in periodRecords) {
-      if (group.isNotEmpty &&
-          DateUtils.daysBetween(group.last.date, record.date) >
+      if (groups.isEmpty ||
+          DateUtils.daysBetween(groups.last.last.date, record.date) >
               maxMissingDaysInPeriod + 1) {
-        _addPeriod(result, group);
-        group = <DailyRecord>[];
+        groups.add(<DailyRecord>[]);
       }
-      group.add(record);
+      groups.last.add(record);
     }
-    _addPeriod(result, group);
-    return result;
+    return groups;
   }
 
   static Map<String, dynamic> getStatistics(

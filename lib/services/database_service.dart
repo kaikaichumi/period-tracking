@@ -94,12 +94,22 @@ class DatabaseService {
   Future<void> saveDailyRecord(DailyRecord record) =>
       saveDailyRecords(<DailyRecord>[record]);
 
-  /// Saves several days with a single read and write, e.g. a period range.
-  Future<void> saveDailyRecords(List<DailyRecord> newRecords) {
+  Future<void> saveDailyRecords(List<DailyRecord> newRecords) =>
+      updateDailyRecords(save: newRecords);
+
+  /// Saves and deletes several days with a single read and write, e.g. when a
+  /// period's dates change.
+  Future<void> updateDailyRecords({
+    List<DailyRecord> save = const <DailyRecord>[],
+    List<DateTime> delete = const <DateTime>[],
+  }) {
     return _serializedWrite(() async {
-      if (newRecords.isEmpty) return;
+      if (save.isEmpty && delete.isEmpty) return;
       final records = await getAllDailyRecords();
-      for (final record in newRecords) {
+      records.removeWhere(
+        (record) => delete.any((date) => isSameDay(record.date, date)),
+      );
+      for (final record in save) {
         final normalizedRecord = record.copyWith(date: _dateOnly(record.date));
         final index = records.indexWhere(
           (item) => isSameDay(item.date, normalizedRecord.date),

@@ -154,8 +154,63 @@ void main() {
       expect(find.text('下次預估'), findsNothing);
     });
 
-    testWidgets('日曆只在範圍模式下允許選取範圍，記錄面板不能下滑關閉',
-        (tester) async {
+    testWidgets('首次記錄經期只要選開始和結束日，存好後顯示週期摘要', (tester) async {
+      await pumpHome(tester, const <DailyRecord>[]);
+      for (var attempt = 0; attempt < 20; attempt++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        if (find.text('記錄經期').evaluate().isNotEmpty) break;
+      }
+
+      await tester.tap(find.text('記錄經期'));
+      for (var attempt = 0; attempt < 10; attempt++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('新增經期'), findsOneWidget);
+      expect(find.text('開始日期'), findsOneWidget);
+      expect(find.text('結束日期'), findsOneWidget);
+
+      await tester.tap(find.text('儲存'));
+      for (var attempt = 0; attempt < 20; attempt++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        if (find.text('你的週期摘要').evaluate().isNotEmpty) break;
+      }
+
+      final records = await DatabaseService.instance.getAllDailyRecords();
+      expect(records.single.date, day(0));
+      expect(records.single.hasPeriod, isTrue);
+      expect(find.text('你的週期摘要'), findsOneWidget);
+      expect(find.text('調整最近一次'), findsOneWidget);
+      // With an undo action, Flutter keeps a snack bar up until it's tapped
+      // unless told otherwise.
+      expect(tester.widget<SnackBar>(find.byType(SnackBar)).persist, isFalse);
+    });
+
+    testWidgets('選到經期中的日子時，可以直接調整整段經期', (tester) async {
+      // Tall enough for the day card under the calendar to be built.
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await pumpHome(tester, <DailyRecord>[
+        for (var offset = -2; offset <= 0; offset++)
+          DailyRecord(
+            date: day(offset),
+            hasPeriod: true,
+            bleedingLevel: BleedingLevel.medium,
+          ),
+      ]);
+
+      expect(find.textContaining('這次經期：'), findsOneWidget);
+      expect(find.textContaining('（3 天）'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(TextButton, '調整'));
+      for (var attempt = 0; attempt < 10; attempt++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('調整經期日期'), findsOneWidget);
+      expect(find.text('共 3 天'), findsOneWidget);
+    });
+
+    testWidgets('日曆不能用長按選取範圍，記錄面板不能下滑關閉', (tester) async {
       await pumpHome(tester, <DailyRecord>[
         DailyRecord(
           date: day(-3),

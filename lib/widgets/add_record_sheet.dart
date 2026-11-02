@@ -11,12 +11,10 @@ class AddRecordSheet extends StatefulWidget {
     required this.onSave,
     this.onDelete,
     this.existingRecord,
-    this.initialHasPeriod = false,
   });
 
   final DateTime selectedDate;
   final DailyRecord? existingRecord;
-  final bool initialHasPeriod;
   final Future<void> Function(DailyRecord record) onSave;
   final Future<void> Function()? onDelete;
 
@@ -32,6 +30,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
 
   bool _hasPeriod = false;
   BleedingLevel _bleedingLevel = BleedingLevel.medium;
+
   /// Null until the user rates the pain, so an untouched slider isn't saved
   /// as "no pain" and doesn't drag down the average.
   int? _painLevel;
@@ -69,8 +68,6 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
       _contraceptionMethod =
           record.contraceptionMethod ?? ContraceptionMethod.none;
       _intimacyNotesController.text = record.intimacyNotes ?? '';
-    } else {
-      _hasPeriod = widget.initialHasPeriod;
     }
     setState(() => _isLoading = false);
   }
@@ -211,9 +208,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                   active ? '這天已標記為經期' : '這天未標記為經期',
                   style: TextStyle(
                     fontSize: 14,
-                    color: active
-                        ? Colors.pink.shade700
-                        : Colors.grey.shade600,
+                    color: active ? Colors.pink.shade700 : Colors.grey.shade600,
                   ),
                 ),
               ],
