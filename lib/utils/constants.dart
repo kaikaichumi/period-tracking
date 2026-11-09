@@ -19,7 +19,8 @@ class AppConstants {
   /// 要建立在和 Android 相同的 Google Cloud 專案，兩邊才看得到同一份備份；
   /// 反轉後的 ID 也必須加進 ios/Runner/Info.plist 的 CFBundleURLTypes，否則登入時
   /// App 會閃退。留空時 iOS 版不提供 Google Drive 備份。
-  static const String googleIosClientId = '';
+  static const String googleIosClientId =
+      '227054575151-0de59nqtsfjigmnhtu83fd3okjtkm1aj.apps.googleusercontent.com';
 
   /// 可選的提醒日（預估經期開始前幾天）。
   static const Set<int> reminderDayOptions = <int>{0, 1, 3, 7};

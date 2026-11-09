@@ -106,23 +106,9 @@ iOS（需在 Mac 上執行）：
 
 ### iOS 的 Google Drive 備份
 
-iOS 版需要自己的 OAuth 用戶端，沒有設定時設定頁不會出現 Google 登入。
+iOS 版使用自己的 OAuth 用戶端「LunaCare iOS」，建立在和 Android 版相同的 Google Cloud 專案（`period-tracking-440807`）裡，所以兩邊讀得到同一份備份。用戶端 ID 寫在 `lib/utils/constants.dart` 的 `googleIosClientId`；反轉後的 ID 則是 `ios/Runner/Info.plist` 的 `CFBundleURLTypes` 網址配置，少了它登入時 App 會閃退。
 
-1. 在 Android 版使用的同一個 Google Cloud 專案中，建立「iOS」類型的 OAuth 用戶端，套件 ID 填 `com.techcare.lunacare`。必須是同一個專案，iOS 才讀得到 Android 版建立的備份。
-2. 把用戶端 ID 填進 `lib/utils/constants.dart` 的 `googleIosClientId`。
-3. 在 `ios/Runner/Info.plist` 加上反轉後的用戶端 ID 作為網址配置，否則登入時 App 會閃退：
-
-        <key>CFBundleURLTypes</key>
-        <array>
-            <dict>
-                <key>CFBundleURLSchemes</key>
-                <array>
-                    <string>com.googleusercontent.apps.你的用戶端ID前綴</string>
-                </array>
-            </dict>
-        </array>
-
-`flutter test` 會檢查這兩處是否一致。
+如果要換用戶端（例如套件 ID 改了），兩處都要更新，`flutter test` 會檢查它們是否一致。把 `googleIosClientId` 留空，iOS 版就不會出現 Google 登入。
 
 ## 🎨 介面截圖
 

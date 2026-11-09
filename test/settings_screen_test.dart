@@ -55,7 +55,7 @@ void main() {
     expect(find.textContaining('不會隨系統自動備份上傳'), findsOneWidget);
   });
 
-  testWidgets('iOS 沒有 Google 用戶端 ID 時不提供登入，並說明 iCloud 備份', (tester) async {
+  testWidgets('iOS 也能用 Google Drive 備份，並說明 iCloud 裝置備份', (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await tester.pumpWidget(
@@ -66,11 +66,11 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('這個版本尚未提供雲端備份'), findsOneWidget);
-    expect(find.text('登入 Google 帳號'), findsNothing);
-    expect(find.text('建立備份'), findsNothing);
+    expect(find.text('這個版本尚未提供雲端備份'), findsNothing);
+    expect(find.text('登入 Google 帳號'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('資料儲存方式'), 200);
     expect(find.textContaining('iCloud 備份'), findsOneWidget);
+    expect(find.textContaining('Google Drive 的 App 私人資料夾'), findsOneWidget);
     debugDefaultTargetPlatformOverride = null;
   });
 }
