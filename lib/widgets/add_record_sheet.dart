@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../models/daily_record.dart';
@@ -25,8 +27,14 @@ class AddRecordSheet extends StatefulWidget {
 class _AddRecordSheetState extends State<AddRecordSheet> {
   bool _isLoading = true;
   bool _isSaving = false;
-  bool _isDirty = false;
   DailyRecord? _loadedRecord;
+
+  /// What the form would save when it opened, to tell whether it changed.
+  /// Comparing contents means undoing an edit by hand doesn't count.
+  String? _initialContents;
+
+  /// Shown in the sheet itself: a snack bar would sit behind it.
+  String? _errorText;
 
   bool _hasPeriod = false;
   BleedingLevel _bleedingLevel = BleedingLevel.medium;
@@ -69,8 +77,43 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
           record.contraceptionMethod ?? ContraceptionMethod.none;
       _intimacyNotesController.text = record.intimacyNotes ?? '';
     }
-    setState(() => _isLoading = false);
+    setState(() {
+      _isLoading = false;
+      _initialContents = _contents();
+    });
   }
+
+  DailyRecord _buildRecord() {
+    return DailyRecord(
+      id: _loadedRecord?.id,
+      date: widget.selectedDate,
+      hasPeriod: _hasPeriod,
+      bleedingLevel: _hasPeriod ? _bleedingLevel : null,
+      painLevel: _hasPeriod ? _painLevel : null,
+      symptoms: Map<String, bool>.from(_symptoms),
+      hasIntimacy: _hasIntimacy,
+      intimacyFrequency: _hasIntimacy ? _intimacyFrequency : null,
+      contraceptionMethod: _hasIntimacy ? _contraceptionMethod : null,
+      notes: _trimmedOrNull(_notesController.text),
+      intimacyNotes: _trimmedOrNull(_intimacyNotesController.text),
+    );
+  }
+
+  String _contents() => jsonEncode(_buildRecord().toJson());
+
+  bool get _isDirty =>
+      _initialContents != null && _contents() != _initialContents;
+
+  bool get _isFormEmpty =>
+      !_hasPeriod &&
+      !_hasIntimacy &&
+      !_symptoms.values.any((value) => value) &&
+      _notesController.text.trim().isEmpty &&
+      _intimacyNotesController.text.trim().isEmpty;
+
+  /// Saving an emptied day removes its record instead of keeping a blank one,
+  /// e.g. after taking the period mark off a day with nothing else on it.
+  bool get _savingRemovesRecord => _isFormEmpty && _loadedRecord != null;
 
   @override
   void dispose() {
@@ -240,7 +283,6 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
   void _togglePeriod() {
     setState(() {
       _hasPeriod = !_hasPeriod;
-      _isDirty = true;
     });
   }
 
@@ -263,7 +305,6 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
             onSelectionChanged: (selection) {
               setState(() {
                 _bleedingLevel = selection.first;
-                _isDirty = true;
               });
             },
           ),
@@ -285,7 +326,6 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                 TextButton(
                   onPressed: () => setState(() {
                     _painLevel = null;
-                    _isDirty = true;
                   }),
                   child: const Text('清除'),
                 ),
@@ -300,7 +340,6 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
             onChanged: (value) {
               setState(() {
                 _painLevel = value.round();
-                _isDirty = true;
               });
             },
           ),
@@ -326,7 +365,6 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                 onSelected: (selected) {
                   setState(() {
                     _symptoms[entry.key] = selected;
-                    _isDirty = true;
                   });
                 },
               );
@@ -349,7 +387,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
             maxLines: 3,
             textCapitalization: TextCapitalization.sentences,
             decoration: const InputDecoration(hintText: '記下今天的狀況（選填）'),
-            onChanged: (_) => setState(() => _isDirty = true),
+            onChanged: (_) => setState(() {}),
           ),
         ],
       ),
@@ -369,7 +407,6 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
             onChanged: (value) {
               setState(() {
                 _hasIntimacy = value;
-                _isDirty = true;
               });
             },
           ),
@@ -383,7 +420,6 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                   onPressed: _intimacyFrequency > 1
                       ? () => setState(() {
                             _intimacyFrequency--;
-                            _isDirty = true;
                           })
                       : null,
                   icon: const Icon(Icons.remove),
@@ -401,7 +437,6 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                   onPressed: _intimacyFrequency < 20
                       ? () => setState(() {
                             _intimacyFrequency++;
-                            _isDirty = true;
                           })
                       : null,
                   icon: const Icon(Icons.add),
@@ -422,7 +457,6 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
                 if (value == null) return;
                 setState(() {
                   _contraceptionMethod = value;
-                  _isDirty = true;
                 });
               },
             ),
@@ -431,7 +465,7 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
               controller: _intimacyNotesController,
               maxLines: 2,
               decoration: const InputDecoration(hintText: '相關備註（選填）'),
-              onChanged: (_) => setState(() => _isDirty = true),
+              onChanged: (_) => setState(() {}),
             ),
           ],
         ],
@@ -455,77 +489,91 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
   }
 
   Widget _buildBottomActions() {
+    final colors = Theme.of(context).colorScheme;
+    final canSave = !_isFormEmpty || _savingRemovesRecord;
+    final String? hint = _errorText ??
+        (_savingRemovesRecord
+            ? '這天已經沒有任何內容，儲存後會移除這天的記錄（可以復原）。'
+            : canSave
+                ? null
+                : '選擇至少一項內容後才能儲存。');
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
+        color: colors.surface,
         border: Border(
-          top: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+          top: BorderSide(color: colors.outlineVariant),
         ),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          Expanded(
-            child: OutlinedButton(
-              onPressed: _isSaving ? null : _attemptClose,
-              child: const Text('取消'),
+          if (hint != null) ...<Widget>[
+            Text(
+              hint,
+              key: const Key('save_hint'),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _errorText != null
+                        ? colors.error
+                        : colors.onSurfaceVariant,
+                  ),
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            flex: 2,
-            child: FilledButton.icon(
-              key: const Key('save_record_button'),
-              onPressed: _isSaving ? null : _save,
-              icon: _isSaving
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.check),
-              label: Text(_isSaving ? '儲存中' : '儲存記錄'),
-            ),
+            const SizedBox(height: 8),
+          ],
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _isSaving ? null : _attemptClose,
+                  child: const Text('取消'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: _buildSaveButton(canSave),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Future<void> _save() async {
-    if (!_hasPeriod &&
-        !_hasIntimacy &&
-        !_symptoms.values.any((value) => value) &&
-        _notesController.text.trim().isEmpty &&
-        _intimacyNotesController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('請至少選擇一項內容再儲存。')),
-      );
-      return;
-    }
-    setState(() => _isSaving = true);
-    final record = DailyRecord(
-      id: _loadedRecord?.id,
-      date: widget.selectedDate,
-      hasPeriod: _hasPeriod,
-      bleedingLevel: _hasPeriod ? _bleedingLevel : null,
-      painLevel: _hasPeriod ? _painLevel : null,
-      symptoms: Map<String, bool>.from(_symptoms),
-      hasIntimacy: _hasIntimacy,
-      intimacyFrequency: _hasIntimacy ? _intimacyFrequency : null,
-      contraceptionMethod: _hasIntimacy ? _contraceptionMethod : null,
-      notes: _trimmedOrNull(_notesController.text),
-      intimacyNotes: _trimmedOrNull(_intimacyNotesController.text),
+  Widget _buildSaveButton(bool canSave) {
+    return FilledButton.icon(
+      key: const Key('save_record_button'),
+      onPressed: _isSaving || !canSave ? null : _save,
+      icon: _isSaving
+          ? const SizedBox.square(
+              dimension: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.check),
+      label: Text(_isSaving ? '儲存中' : '儲存記錄'),
     );
+  }
 
+  Future<void> _save() async {
+    final removeRecord = _savingRemovesRecord && widget.onDelete != null;
+    setState(() {
+      _isSaving = true;
+      _errorText = null;
+    });
     try {
-      await widget.onSave(record);
+      if (removeRecord) {
+        await widget.onDelete!();
+      } else {
+        await widget.onSave(_buildRecord());
+      }
       if (mounted) Navigator.of(context).pop();
     } on Object catch (error) {
       if (!mounted) return;
-      setState(() => _isSaving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('儲存失敗：$error')),
-      );
+      setState(() {
+        _isSaving = false;
+        _errorText = '儲存失敗：$error';
+      });
     }
   }
 
@@ -549,16 +597,19 @@ class _AddRecordSheetState extends State<AddRecordSheet> {
     );
     if (confirmed != true || widget.onDelete == null) return;
 
-    setState(() => _isSaving = true);
+    setState(() {
+      _isSaving = true;
+      _errorText = null;
+    });
     try {
       await widget.onDelete!();
       if (mounted) Navigator.of(context).pop();
     } on Object catch (error) {
       if (!mounted) return;
-      setState(() => _isSaving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('刪除失敗：$error')),
-      );
+      setState(() {
+        _isSaving = false;
+        _errorText = '刪除失敗：$error';
+      });
     }
   }
 

@@ -110,6 +110,64 @@ void main() {
       // The pain slider was never touched, so no pain score is recorded.
       expect(saved.single.painLevel, isNull);
     });
+
+    testWidgets('只有經期標記的日子取消標記後，按儲存會移除這天的記錄', (tester) async {
+      final periodDay = DailyRecord(
+        date: DateTime(2026, 5, 9),
+        hasPeriod: true,
+        bleedingLevel: BleedingLevel.medium,
+      );
+      var deleted = 0;
+      final saved = <DailyRecord>[];
+      await tester.pumpWidget(_sheetHarness(
+        existing: periodDay,
+        onSave: (record) async => saved.add(record),
+        onDelete: () async => deleted++,
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(OutlinedButton, '取消經期標記'));
+      await tester.pump();
+
+      expect(find.textContaining('儲存後會移除這天的記錄'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('save_record_button')));
+      await tester.pump();
+
+      // No confirmation in between: the hint said so and the home screen
+      // offers undo.
+      expect(deleted, 1);
+      expect(saved, isEmpty);
+    });
+
+    testWidgets('新的一天還沒選內容時不能儲存，並說明原因', (tester) async {
+      await tester.pumpWidget(_sheetHarness(onSave: (_) async {}));
+      await tester.pumpAndSettle();
+
+      final save = tester.widget<ButtonStyleButton>(
+        find.byKey(const Key('save_record_button')),
+      );
+      expect(save.onPressed, isNull);
+      expect(find.text('選擇至少一項內容後才能儲存。'), findsOneWidget);
+    });
+
+    testWidgets('改了又改回原樣，關閉時不會問要不要放棄變更', (tester) async {
+      await tester.pumpWidget(_sheetHarness(onSave: (_) async {}));
+      await tester.pumpAndSettle();
+      bool canPop() => tester
+          .widget<PopScope<Object?>>(find.descendant(
+            of: find.byType(AddRecordSheet),
+            matching: find.byWidgetPredicate((widget) => widget is PopScope),
+          ))
+          .canPop;
+
+      await tester.tap(find.widgetWithText(FilledButton, '標記為經期'));
+      await tester.pump();
+      expect(canPop(), isFalse);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, '取消經期標記'));
+      await tester.pump();
+      expect(canPop(), isTrue);
+    });
   });
 
   group('HomeScreen', () {
